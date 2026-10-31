@@ -188,3 +188,46 @@ def test_effective_view_inherits_unchanged_atoms(db):
     assert ledger.latest_verdicts("synthetic", 2) == []
     latest, = ledger.append_verdicts([make_verdict(2)])
     assert ledger.get_session("synthetic").verdicts[0].verdict_id == latest
+
+
+@pytest.fixture
+def session_flags(db):
+    ledger.add_session(make_session())
+    flags = [dict(flag_code="NO_AD_CONFIRMATION", rule_id="R06", message="Synthetic ad flag"),
+             dict(flag_code="RECALLED_AT_AS_OF", rule_id="L1_RECALL", message="Synthetic recall flag")]
+    ledger.add_session_flags("synthetic", flags)
+    return ledger.get_session("synthetic").flags
+
+
+def test_replace_session_flags_removes_stale_and_clears_all(session_flags):
+    ledger.add_session(make_session("other"))
+    ledger.add_session_flags("other", session_flags)
+    replacement = session_flags[1].model_copy(update={"message": "Updated synthetic recall"})
+    ledger.replace_session_flags("synthetic", [replacement])
+    assert ledger.get_session("synthetic").flags == [replacement]
+    ledger.replace_session_flags("synthetic", [])
+    assert ledger.get_session("synthetic").flags == []
+    assert ledger.get_session("other").flags == session_flags
+
+
+def test_replace_session_flags_rolls_back_after_partial_insert(session_flags):
+    with pytest.raises(ValueError):
+        ledger.replace_session_flags("synthetic", [session_flags[0], {"flag_code": "invalid"}])
+    assert ledger.get_session("synthetic").flags == session_flags
+
+
+def test_replace_session_flags_joins_outer_transaction(session_flags):
+    with ledger.transaction():
+        ledger.append_event("queue.changed", {"synthetic": True})
+        ledger.replace_session_flags("synthetic", [session_flags[0]])
+        assert ledger.get_session("synthetic").flags == [session_flags[0]]
+        with pytest.raises(ValueError):
+            ledger.replace_session_flags("synthetic", [session_flags[1], {"flag_code": "invalid"}])
+        assert ledger.get_session("synthetic").flags == [session_flags[0]]
+    assert ledger.get_session("synthetic").flags == [session_flags[0]]
+    assert len(ledger.events_since(0)) == 1
+    with pytest.raises(RuntimeError, match="rollback"):
+        with ledger.transaction():
+            ledger.replace_session_flags("synthetic", [])
+            raise RuntimeError("rollback")
+    assert ledger.get_session("synthetic").flags == [session_flags[0]]
