@@ -205,7 +205,9 @@ def test_validation_and_map_calls(boundary):
         llm.map_calls([], parallel=0)
 
 
-def test_diagnose_does_not_write(boundary, capsys):
+def test_diagnose_does_not_write(boundary, capsys, monkeypatch, tmp_path):
+    # Exercise the built-in fallback regardless of which step schemas have landed.
+    monkeypatch.setattr(llm, "SCHEMA_DIR", tmp_path / "no step schemas")
     root, calls, records = boundary
     assert llm.main(["diagnose", "--kind", "s1"]) == 0
     text = capsys.readouterr().out
