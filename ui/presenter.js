@@ -31,7 +31,7 @@ export async function presenterView(showScene) {
       else jump(1);
     } else if (key === 'arrowleft' && scene === 0) { event.preventDefault(); index = Math.max(0, index - 1); slide(); }
     else if (/^[1-6]$/.test(key) || (event.shiftKey && event.code === 'Digit1')) jump(event.shiftKey ? 1 : Number(key), event.shiftKey);
-    else if (key === 'b') { const next = previous; previous = scene; scene = next; if (!scene) slide(); else jump(scene); }
+    else if (key === 'b') { const next = previous; if (!next) { previous = scene; scene = 0; slide(); } else jump(next); }
     else if (key === 'l') {
       const { pr1_third_target: target, labeler } = manifest.present;
       if (!target || !labeler) return;

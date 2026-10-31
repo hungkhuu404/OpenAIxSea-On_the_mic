@@ -32,17 +32,34 @@ setInterval(corner, 10000);
 
 async function showSession(root, id, translations = {}) {
   const session = await loadSession(id);
-  const view = sessionView(session, translations, session.events || []);
+  let view = sessionView(session, translations, session.events || []);
   root.append(view.node);
   const latest = session.verdicts?.map(row => row.ts).sort().at(-1);
   document.querySelector('#time-context').textContent = session.live ? 'LIVE' : `REPLAY · processed ${latest ? new Date(latest).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'}`;
-  if (!session.fixture) stopEvents = events(Boolean(health.public), view.event);
+  if (!session.fixture) {
+    let refreshing = false;
+    stopEvents = events(Boolean(health.public), async event => {
+      view.event(event);
+      if (!['verdict', 'turn.verdict', 'session.flag', 'backfill.done'].includes(event.type) || refreshing) return;
+      refreshing = true;
+      try {
+        const updated = await loadSession(session.session_id);
+        if (!root.isConnected) return;
+        const next = sessionView(updated, translations);
+        view.node.replaceWith(next.node); view = next;
+      } finally { refreshing = false; }
+    });
+  }
 }
 async function scene(root, number, backup, manifest) {
   try {
     if (number === 1) {
       const key = backup ? 'a2' : 'a1', clip = manifest.clips[key];
-      if (!clip?.available) { root.append(el('p', 'Clip unavailable', 'notice')); return; }
+      if (!clip?.available) {
+        root.append(el('p', 'Clip unavailable · synthetic demo', 'notice'));
+        await showSession(root, null, manifest.translations);
+        return;
+      }
       const video = el('video'); video.controls = true; video.src = `/present/clip/${key}.mp4`; root.append(video);
       for (const line of [clip.speaker_line, clip.source_line]) if (line) root.append(el('p', line));
       if (clip.subtitles) {
@@ -80,7 +97,9 @@ async function route() {
     } else {
       app.append(el('h1', 'Session ledger'));
       const id = new URLSearchParams(location.hash.split('?')[1]).get('session');
-      await showSession(app, id);
+      let translations = {};
+      try { translations = (await request('/api/present/manifest')).translations; } catch { /* Optional local translations. */ }
+      await showSession(app, id, translations);
     }
   } catch { app.append(el('p', 'Session unavailable. Please check the local service.', 'notice')); }
 }

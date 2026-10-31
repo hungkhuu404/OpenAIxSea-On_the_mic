@@ -39,9 +39,10 @@ def manifest(request: Request, presenter: int = 0):
         raise HTTPException(404)
     root = _root()
     video = bool(settings.VIDEO_MODE)
+    slide_dir = _inside(root, "slides")
     slides = [] if video else [
         "/present/" + path.relative_to(root).as_posix()
-        for path in sorted((root / "slides").glob("*.png"))
+        for path in sorted(slide_dir.glob("*.png"))
         if path.is_file() and path.resolve().is_relative_to(root)
     ]
     clips = {}
