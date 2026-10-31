@@ -289,6 +289,10 @@ def _annotate_meta(worktree, job, attempts, revealed, family):
     if (meta.id != job.rule_id or meta.family != family or meta.origin != "t5"
             or meta.status != "proposed" or meta.approved_by is not None or meta.approved_at is not None):
         raise ValueError("Draft metadata must remain proposed and unapproved for the job family")
+    task = _read(worktree / "loop_input/task.json")
+    sources = _read(worktree / "loop_input/sources.json")
+    if meta.anchors != [task["anchor"]] or meta.source_case_ids != [item["item_id"] for item in sources]:
+        raise ValueError("Draft metadata must use the supplied anchor and source item ids")
     meta.attempts = [RuleAttempt(ts=a["finished"], gate_result=a["gate_result"],
                           error_lines=a["error_lines"], files_read=a["files_read"]) for a in attempts]
     meta.revealed_case_ids = sorted(revealed)
@@ -357,7 +361,6 @@ def run_job(job_id):
     branch = f"rule/{job.rule_id}-{job.job_id}"
     job = update_job(job_id, status="running", branch=branch, dry=bool(settings.LOOP_DRY),
                      config=config_fields()["cfg"], pid=None)
-    append_event("job.started", dict(job_id=job_id, rule_id=job.rule_id, cluster_key=job.cluster_key))
     attempts, revealed = [], set()
     cluster_path = worktree = None
     status, pr_url, family = "error", None, None
@@ -431,23 +434,23 @@ def run_job(job_id):
                 except Exception as exc:
                     status = "error"
                     attempt["error_lines"].append(str(exc))
+        if cluster_path is not None and (status != "failed" or number == 3):
+            try:
+                _record_run(cluster_path, job, started, attempts, status, pr_url)
+            except Exception as exc:
+                status = "error"
+                attempt["error_lines"].append(str(exc))
+                # Preserve the error run when the optional local git commit fails.
+                with _cluster_lock(cluster_path):
+                    cluster = ClusterFile.model_validate(_read(cluster_path))
+                    cluster.runs = [run for run in cluster.runs if run.job_id != job.job_id]
+                    cluster.runs.append(_run_summary(job, started, attempts, status, pr_url))
+                    _write(cluster_path, cluster.model_dump(mode="json"))
         update_job(job_id, attempts=attempts)
         append_event("job.attempt", dict(job_id=job_id, attempt_no=number,
                      gate_result=attempt["gate_result"], error_lines=attempt["error_lines"], files_read=files_read))
         if status != "failed":
             break
-    if cluster_path is not None:
-        try:
-            _record_run(cluster_path, job, started, attempts, status, pr_url)
-        except Exception as exc:
-            status = "error"
-            attempts[-1]["error_lines"].append(str(exc))
-            # Record the error run even when the optional local git commit failed.
-            with _cluster_lock(cluster_path):
-                cluster = ClusterFile.model_validate(_read(cluster_path))
-                cluster.runs = [run for run in cluster.runs if run.job_id != job.job_id]
-                cluster.runs.append(_run_summary(job, started, attempts, status, pr_url))
-                _write(cluster_path, cluster.model_dump(mode="json"))
     job = update_job(job_id, status=status, attempts=attempts, pid=None, pr_url=pr_url)
     append_event("job.finished", dict(job_id=job_id, status=status, pr_url=pr_url))
     return job

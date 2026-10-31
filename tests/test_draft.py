@@ -373,3 +373,4 @@ def test_real_labels_t5_dispatch_to_real_dry_runner(world, monkeypatch):
     with pytest.raises(ValueError, match="exact cluster"):
         cli.make_cluster([item.item_id for item in reversed(items)], "duplicate")
     assert len(ledger.list_labels()) == 3
+    assert sum(row.type == "job.started" for row in ledger.events_since(0)) == 1

@@ -46,7 +46,7 @@ def make_cluster(item_ids, name):
 
 
 def run_cluster(path, repeat=1):
-    from ledger import create_job
+    from ledger import append_event, create_job
     from loop.t5 import allocate_rule_id
 
     if repeat < 1:
@@ -66,6 +66,7 @@ def run_cluster(path, repeat=1):
             branch=f"rule/{rule_id}-{job_id}", cluster_key=cluster.name,
             cluster_item_ids=cluster.item_ids, cluster_hash=cluster.cluster_hash,
             status="queued", dry=False, config="", ts=draft._now()))
+        append_event("job.started", dict(job_id=job_id, rule_id=rule_id, cluster_key=cluster.name))
         job = draft.run_job(job_id)
         jobs.append(job)
         print(json.dumps(dict(job_id=job.job_id, rule_id=job.rule_id, branch=job.branch,
