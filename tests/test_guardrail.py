@@ -12,7 +12,7 @@ import unicodedata
 from pydantic import BaseModel
 import pytest
 
-from core.models import Context, SessionFlag, Verdict
+from core.models import AtomView, Context, SessionFlag, Verdict
 from pipeline import guardrail
 
 
@@ -201,6 +201,65 @@ def test_red_law_span_uses_meta_and_ordered_phrases(monkeypatch, context):
     assert guardrail.finalize(red, _ctx(context), 1).law_span == "chữa bệnh"
     _fake_registry(monkeypatch, span="Missing phrase")
     assert guardrail.finalize(red, _ctx(context), 1).law_span is None
+
+
+def test_unapproved_candidate_measure_pack_finalizes_red(monkeypatch, tmp_path, context):
+    from rules import registry
+
+    directory = tmp_path / "candidate with spaces" / "rules"
+    directory.mkdir(parents=True)
+    meta = json.loads((ROOT / "rules" / "R04.meta.json").read_text(encoding="utf-8"))
+    meta.update(id="R12_CANDIDATE", origin="t5", status="proposed",
+                approved_by=None, approved_at=None)
+    (directory / "R12_CANDIDATE.meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    constants = {"RULE_ID": meta["id"], "FAMILY": meta["family"], "ORIGIN": meta["origin"],
+                 "ANCHORS": meta["anchors"], "LAW_SPAN": meta["law_span"],
+                 "PRECEDENCE": meta["precedence"]}
+    source = "".join(f"{name} = {value!r}\n" for name, value in constants.items())
+    source += ("from rules._common import make_hit\n"
+               "def check(atom_view):\n"
+               "    return [make_hit(RULE_ID, FAMILY, atom_view.text, ANCHORS[0], LAW_SPAN, PRECEDENCE)]\n")
+    (directory / "R12_CANDIDATE.py").write_text(source, encoding="utf-8")
+    pack = registry.load_pack([meta["id"]], mode="measure", candidate_dir=directory.parent)
+    assert pack.mode == "measure" and len(pack.active) == 1
+    assert pack.active[0].meta.approved_by is None
+    ctx = _ctx(context)
+    view = AtomView(text="chữa bệnh", key="chữa bệnh", axis="cong_dung",
+                    speaker_role="khong_ro", category_norm=ctx.category_norm,
+                    as_of=ctx.as_of, turn_text="chữa bệnh")
+    hit, = pack.check_atom(view)
+    draft = _draft("red", hit.family, decided_by=f"rule:{hit.rule_id}", fired_rules=[hit.rule_id])
+    with pytest.raises(ValueError, match="Deciding rule is missing from the registry"):
+        guardrail.finalize(draft, ctx, 1)
+
+    def no_tree_lookup():
+        raise AssertionError("Candidate metadata must come from the supplied pack")
+
+    monkeypatch.setattr(registry, "all_rules", no_tree_lookup)
+    result = guardrail.finalize(draft, ctx, 1, pack=pack)
+    assert result.verdict == "red" and result.decided_by == f"rule:{meta['id']}"
+    assert result.fired_rules == [meta["id"]]
+    assert result.legal_basis == ["LDUOC-2016/D6/K15"]
+    assert result.law_span == "chữa bệnh"
+
+
+@pytest.mark.parametrize("location", ["active", "quarantined"])
+def test_runtime_pack_metadata_precedes_tree_registry(monkeypatch, location):
+    _fake_registry(monkeypatch, span="Tree metadata")
+    meta = SimpleNamespace(law_span="Pack metadata", family="R04", origin="t5")
+    pack = SimpleNamespace(active=(), quarantined=())
+    setattr(pack, location, (SimpleNamespace(rule_id="R04", meta=meta),))
+    assert guardrail._rule_meta("R04", pack=pack) is meta
+
+
+def test_unmatched_pack_falls_back_to_registry_and_default_stays_compatible(monkeypatch, context):
+    _fake_registry(monkeypatch)
+    ctx, draft = _ctx(context), _draft("red", "R04")
+    expected = guardrail.finalize(draft, ctx, 1).model_dump(exclude={"ts"})
+    for pack in (None, SimpleNamespace(active=(), quarantined=())):
+        assert guardrail.finalize(draft, ctx, 1, pack=pack).model_dump(exclude={"ts"}) == expected
+    with pytest.raises(TypeError):
+        guardrail.finalize(draft, ctx, 1, None)
 
 
 def test_real_textnorm_preserves_diacritics_and_case(monkeypatch, context):
