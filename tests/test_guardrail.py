@@ -105,8 +105,8 @@ def test_display_text_penalty_variants_and_remaining_amounts(monkeypatch, tmp_pa
     ("yellow", "R05", "2025-01-08", "TPBVSK", ["ND15-2018/D27/K6", "ND15-2018/D27/K2"]),
     ("red", "R08", "2025-02-12", "thuc_pham_bo_sung", ["ND15-2018/D27/K2"]),
     ("red", "R08", "2026-05-14", "thuc_pham_bo_sung", ["ND15-2018/D27/K2"]),
-    ("red", "R08", "2026-05-15", "thuc_pham_bo_sung", ["ND87-2026/D71/K4"]),
-    ("red", "R08", "2026-06-19", "thuc_pham_bo_sung", ["ND87-2026/D71/K4"]),
+    ("red", "R08", "2026-05-15", "thuc_pham_bo_sung", ["ND15-2018/D27/K2", "ND87-2026/D71/K4"]),
+    ("red", "R08", "2026-06-19", "thuc_pham_bo_sung", ["ND15-2018/D27/K2", "ND87-2026/D71/K4"]),
     ("red", "R09", "2025-08-14", "thuc_pham_bo_sung", ["LQC-2012/D8/K11"]),
     ("red", "R09", "2026-07-04", "thuc_pham_bo_sung", ["LQC-2012/D8/K11", "ND87-2026/D50/K2/a"]),
     ("green", "STANDARD", "2025-01-08", "thuc_pham_bo_sung", ["ND15-2018/D27/K2"]),
@@ -122,6 +122,32 @@ def test_dated_category_basis(context, colour, family, when, category, expected)
     assert result.rule_pack_version == 7
     if when == "2025-01-08":
         assert not any(anchor.startswith("ND87-2026/") for anchor in result.legal_basis)
+
+
+@pytest.mark.parametrize("role", ["bac_si", "duoc_si", "nguoi_benh"])
+@pytest.mark.parametrize("when", ["2026-05-14", "2026-05-15", "2026-10-31"])
+def test_real_r08_role_and_date_preserve_applicable_basis(context, role, when):
+    from rules.registry import load_pack
+    from textnorm import match_key
+
+    ctx = _ctx(context, when)
+    phrase = {"bac_si": "bác sỹ", "duoc_si": "dược sỹ", "nguoi_benh": "người bệnh"}[role]
+    text = f"{phrase} giới thiệu sản phẩm."
+    view = AtomView(text=text, key=match_key(text)[0], axis="vien_dan", speaker_role=role,
+                    role_span=phrase, category_norm=ctx.category_norm,
+                    as_of=ctx.as_of, turn_text=text)
+    pack = load_pack(["R08"], mode="live")
+    hit, = pack.check_atom(view)
+    assert hit.rule_id == "R08"
+    draft = _draft("red", hit.family, decided_by=f"rule:{hit.rule_id}",
+                   fired_rules=[hit.rule_id], evidence_span=hit.matched)
+    verdict = guardrail.finalize(draft, ctx, 1, pack=pack)
+    assert verdict.verdict == "red"
+    assert verdict.legal_basis and "ND15-2018/D27/K2" in verdict.legal_basis
+    index = {row["id"]: row["text"] for row in json.loads(
+        (ROOT / "data" / "law" / "index.json").read_text(encoding="utf-8"))}
+    assert verdict.law_span and any(verdict.law_span in index[anchor]
+                                    for anchor in verdict.legal_basis)
 
 
 def test_law_not_yet_effective_abstains_without_losing_fired_rules(monkeypatch, tmp_path, context):
