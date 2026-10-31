@@ -18,3 +18,32 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m core.config
       - run: pytest
+      - name: Gate new adaptive rules
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE: ${{ github.base_ref }}
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          base = "origin/" + os.environ["PR_BASE"]
+          added = subprocess.run(
+              ["git", "diff", "--name-only", "--diff-filter=A", "-z", base + "...HEAD", "--", "rules/"],
+              check=True, capture_output=True, text=True,
+          ).stdout.split("\0")
+          helpers = {"registry", "_common", "roles", "nearhit", "__init__"}
+          for name in added:
+              path = Path(name)
+              if path.parent != Path("rules") or path.suffix != ".py" or path.stem in helpers:
+                  continue
+              metadata = path.with_suffix(".meta.json")
+              meta = json.loads(metadata.read_text(encoding="utf-8"))
+              if meta["origin"] == "t5":
+                  subprocess.run(
+                      [sys.executable, "-m", "gate.run", "--ci", "--base", base,
+                       "--rule", meta["id"], "--candidate-dir", "."], check=True,
+                  )

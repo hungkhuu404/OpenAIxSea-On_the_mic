@@ -1,0 +1,16 @@
+{
+  "id": "R04x",
+  "family": "R04",
+  "origin": "t5",
+  "article_id": "LDUOC-2016/D6",
+  "anchors": ["LDUOC-2016/D6/K15"],
+  "law_span": "chữa bệnh",
+  "source_case_ids": [],
+  "trigger": "Synthetic trigger for behaviour tests.",
+  "precedence": 14,
+  "attempts": [],
+  "revealed_case_ids": [],
+  "approved_by": null,
+  "approved_at": null,
+  "status": "proposed"
+}
