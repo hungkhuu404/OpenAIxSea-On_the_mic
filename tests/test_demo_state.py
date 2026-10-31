@@ -239,6 +239,17 @@ def test_restore_preflights_present_before_mutating_ledger(world):
     assert len(ledger.list_labels()) == 1
 
 
+def test_missing_snapshot_database_never_creates_an_empty_source(world):
+    demo.snapshot('saved')
+    ledger.add_label(dict(target='synthetic', kind='report_wrong', labeler='operator'))
+    source = demo.snapshot_path('saved') / 'ledger.db'
+    source.unlink()
+    with pytest.raises(ValueError, match='Ledger source is missing'):
+        demo.restore('saved', free_port())
+    assert not source.exists()
+    assert len(ledger.list_labels()) == 1
+
+
 def test_missing_module_exact_only(world, monkeypatch):
     def missing(name):
         raise ModuleNotFoundError(name=name)

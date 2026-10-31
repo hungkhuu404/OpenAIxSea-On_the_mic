@@ -27,9 +27,14 @@ def stamp():
 
 
 def backup(source, destination):
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(source)) as src, closing(sqlite3.connect(destination)) as dst:
-        src.backup(dst)
+    if not source.is_file() or source.is_symlink():
+        raise ValueError('Ledger source is missing or is a link')
+    with closing(sqlite3.connect(source.resolve().as_uri() + '?mode=ro', uri=True)) as src:
+        if src.execute('SELECT version FROM rule_packs LIMIT 1').fetchone() is None:
+            raise ValueError('Ledger source has no rule pack')
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(destination)) as dst:
+            src.backup(dst)
 
 
 def copy_tree(source, destination):
@@ -380,7 +385,7 @@ def main(argv=None):
         elif args.command == 'prepare': prepare(args.exclude_rule, args.port)
         elif args.command == 'export': export(args.name, args.to)
         else: import_state(args.source)
-    except (ValueError, OSError) as error:
+    except (ValueError, OSError, sqlite3.Error) as error:
         parser.exit(1, str(error) + '\n')
 
 
