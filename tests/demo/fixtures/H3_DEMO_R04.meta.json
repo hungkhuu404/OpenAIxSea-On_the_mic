@@ -1,0 +1,23 @@
+{
+  "id": "H3_DEMO_R04",
+  "family": "R04",
+  "origin": "t5",
+  "article_id": "LDUOC-2016/D6/K15",
+  "anchors": ["LDUOC-2016/D6/K15"],
+  "law_span": "chữa bệnh",
+  "source_case_ids": ["h3-synthetic-atom"],
+  "trigger": "Invented disease promise used only inside a disposable test repository.",
+  "precedence": 35,
+  "attempts": [
+    {
+      "ts": "2026-10-21T09:00:00Z",
+      "gate_result": "pass",
+      "error_lines": [],
+      "files_read": ["rules/H3_DEMO_R04.py"]
+    }
+  ],
+  "revealed_case_ids": [],
+  "approved_by": null,
+  "approved_at": null,
+  "status": "proposed"
+}
