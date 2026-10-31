@@ -182,7 +182,7 @@ class Harness:
 
     def verdicts(self, session_id):
         import ledger
-        return [record(row) for row in ledger.latest_verdicts(session_id)]
+        return [record(row) for row in ledger.effective_verdicts(session_id)]
 
     def atoms(self, session_id, turn_id):
         return [atom for atom in self.session(session_id)["atoms"] if atom["turn_id"] == turn_id]
@@ -203,7 +203,15 @@ class Harness:
 
     def events(self):
         import ledger
-        return [record(event) for event in ledger.events_since(0)]
+        events = []
+        cursor = 0
+        while True:
+            page = [record(event) for event in ledger.events_since(cursor)]
+            if not page:
+                return events
+            assert page[-1]["id"] > cursor, "Event pagination did not advance"
+            events.extend(page)
+            cursor = page[-1]["id"]
 
     def search(self, query, session_id):
         import ledger

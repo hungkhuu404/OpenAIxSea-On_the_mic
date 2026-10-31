@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from .harness import export_head, git, install_process_guard, isolated_imports, require
+from .harness import Harness, export_head, git, install_process_guard, isolated_imports, require
 from .network import NetworkBlocked, install_guard
 from .support import DemoReport, expected_agreement, read_expected, select_pr1_target
 
@@ -286,6 +286,45 @@ def test_synthetic_candidate_loads_only_for_measurement(tmp_path):
     assert [hit.rule_id for hit in pack.check_atom(view)] == [meta.id]
     with pytest.raises(ValueError, match="Candidates are permitted only in measure mode"):
         load_pack([meta.id], mode="live", candidate_dir=directory)
+
+
+def test_event_reader_follows_every_page(monkeypatch, tmp_path):
+    calls = []
+
+    def events_since(cursor):
+        calls.append(cursor)
+        return {0: [{"id": 1}], 1: [{"id": 2}], 2: []}[cursor]
+
+    monkeypatch.setitem(sys.modules, "ledger", SimpleNamespace(events_since=events_since))
+    h = Harness(tmp_path, monkeypatch, DemoReport(tmp_path / "report.md"))
+    assert h.events() == [{"id": 1}, {"id": 2}]
+    assert calls == [0, 1, 2]
+
+
+def test_copied_ledger_views_use_only_the_effective_verdict(demo_environment):
+    import ledger
+    from core.config import settings
+    from core.models import Atom, Session, Verdict
+
+    h = demo_environment
+    ledger.init_db(settings.LEDGER_DB)
+    fixture = h.root / "fixtures"
+    session = Session.model_validate(json.loads((fixture / "session_fake.json").read_text(encoding="utf-8")))
+    ledger.add_session(session)
+    atoms = [Atom.model_validate(row) for row in json.loads((fixture / "atoms_fake.json").read_text(encoding="utf-8"))]
+    ledger.add_atoms(session.session_id, atoms)
+    rows = [Verdict.model_validate(row) for row in json.loads((fixture / "verdicts_fake.json").read_text(encoding="utf-8"))]
+    ledger.append_verdicts(rows)
+    assert h.session(session.session_id)["flags"] == []
+    assert len(h.verdicts(session.session_id)) == 5
+    next_pack = ledger.create_pack_version([], [], "merge", approved_by="hungkhuu404")
+    previous = next(iter(h.verdicts(session.session_id)))
+    replacement = Verdict.model_validate({**previous, "verdict_id": None,
+        "rule_pack_version": next_pack.version, "supersedes": previous["verdict_id"]})
+    ledger.append_verdicts([replacement])
+    assert len(h.verdicts(session.session_id)) == 5
+    selected = next(row for row in h.verdicts(session.session_id) if row["atom_key"] == previous["atom_key"])
+    assert selected["supersedes"] == previous["verdict_id"]
 
 
 def test_pr1_input_fixture_has_the_fixed_three_sentences():

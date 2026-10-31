@@ -176,7 +176,7 @@ def test_opening_clip(demo_environment, mode):
 
 def test_kera_december(kera):
     session = kera.session(DEC)
-    flags = session["session_flags"]
+    flags = session["flags"]
     selected = [record(flag) for flag in flags if record(flag)["flag_code"] == "NO_SELF_DECLARATION_AT_AS_OF"]
     assert len(selected) == 1, f"December: observed {len(selected)} declaration flags"
     flag = next(iter(selected))
