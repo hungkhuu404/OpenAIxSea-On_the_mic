@@ -1,0 +1,4 @@
+[
+  {"passed": false, "checks": [{"id": 4, "passed": false, "detail": "simulated own-test failure"}], "error_lines": ["<rule_id> check 4: synthetic near miss matched."], "observed_changes": [], "revealed_case_ids": []},
+  {"passed": true, "checks": [{"id": 4, "passed": true, "detail": "simulated own-test success"}], "error_lines": [], "observed_changes": [], "revealed_case_ids": []}
+]
