@@ -8,7 +8,7 @@ from core import paths
 from core.config import settings
 from core.models import Atom
 from pipeline import llm
-from textnorm import locate, match_key, nfc
+from textnorm import locate, nfc
 
 
 SYSTEM_MESSAGE = """Extract every atomic advertising claim the CURRENT turn makes about the pinned product.
@@ -73,7 +73,8 @@ def _role(role, span, turn, prev_turn):
     if role == "khong_ro" or not span:
         return "khong_ro", None
     span = nfc(span)
-    if span not in turn.text and (prev_turn is None or span not in prev_turn.text):
+    sources = [turn.text] + ([prev_turn.text] if prev_turn is not None else [])
+    if all(span not in source for source in sources):
         return "khong_ro", None
     try:
         from rules.roles import ROLE_WORDS
@@ -81,11 +82,21 @@ def _role(role, span, turn, prev_turn):
         if exc.name not in ("rules", "rules.roles"):
             raise
         return "khong_ro", None
-    key, _ = match_key(span)
-    for word in ROLE_WORDS.get(role, ()):
-        word_key, _ = match_key(word)
-        if f" {word_key} " in f" {key} ":
-            return role, span
+    from rules._common import negation_scope, syllable_matches
+
+    proofs = syllable_matches(span, ROLE_WORDS.get(role, ()))
+    for source in sources:
+        for occurrence in re.finditer(re.escape(span), source):
+            for proof in proofs:
+                start, end = occurrence.start() + proof.start, occurrence.start() + proof.end
+                if start and (source[start - 1].isalnum() or source[start - 1] == "_"):
+                    continue
+                if end < len(source) and (source[end].isalnum() or source[end] == "_"):
+                    continue
+                # A later negated product claim must not negate an earlier title.
+                denied, unclear = negation_scope(source[:end], start, end)
+                if not denied and not unclear:
+                    return role, span
     return "khong_ro", None
 
 

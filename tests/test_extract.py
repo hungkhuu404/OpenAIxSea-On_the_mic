@@ -123,6 +123,41 @@ def test_role_is_proved_in_current_or_previous_turn(fake_llm, role_span, expecte
     assert atom.role_span == (role_span if expected != "khong_ro" else None)
 
 
+@pytest.mark.parametrize("text, role, role_span", [
+    ("OATS chứa yến mạch.", "bac_si", "TS"),
+    ("ABS chứa yến mạch.", "bac_si", "BS"),
+    ("ADSL chứa yến mạch.", "duoc_si", "DS"),
+    ("Tôi không phải bác sĩ. Sản phẩm chứa yến mạch.", "bac_si", "bác sĩ"),
+    ("Tôi chưa từng là dược sĩ. Sản phẩm chứa yến mạch.", "duoc_si", "dược sĩ"),
+    ("Tôi không phải người bệnh. Sản phẩm chứa yến mạch.", "nguoi_benh", "người bệnh"),
+])
+@pytest.mark.parametrize("evidence_in_previous", [False, True])
+def test_unproved_role_cannot_trigger_r08(fake_llm, text, role, role_span, evidence_in_previous):
+    from rules import R08
+
+    state, _ = fake_llm
+    sample = session("Sản phẩm chứa yến mạch." if evidence_in_previous else text)
+    previous = Turn(turn_id="t00", speaker_label="[KOL 1]", attribution="constructed", text=text) if evidence_in_previous else None
+    state["atoms"] = [item("chứa yến mạch", axis="thanh_phan", speaker_role=role, role_span=role_span)]
+    atom = extract.extract_atoms(sample, sample.turns[0], previous, None)[0]
+    assert atom.speaker_role == "khong_ro" and atom.role_span is None
+    assert R08.check(SimpleNamespace(speaker_role=atom.speaker_role)) == []
+
+
+@pytest.mark.parametrize("text, role_span", [
+    ("BS xác nhận sản phẩm chứa yến mạch.", "BS"),
+    ("OATS được TS xác nhận chứa yến mạch.", "TS"),
+    ("Tôi là bác sĩ và sản phẩm không chứa đường, chỉ chứa yến mạch.", "bác sĩ"),
+    ("Tôi không phải bác sĩ; bác sĩ tư vấn sản phẩm chứa yến mạch.", "bác sĩ"),
+])
+def test_positive_role_proof_is_not_lost(fake_llm, text, role_span):
+    state, _ = fake_llm
+    sample = session(text)
+    state["atoms"] = [item("chứa yến mạch", speaker_role="bac_si", role_span=role_span)]
+    atom = extract.extract_atoms(sample, sample.turns[0], None, None)[0]
+    assert atom.speaker_role == "bac_si" and atom.role_span == role_span
+
+
 def test_missing_role_module_is_only_missing_collaborator(fake_llm, monkeypatch):
     state, _ = fake_llm
     sample = session("Tôi là bác sĩ.")
