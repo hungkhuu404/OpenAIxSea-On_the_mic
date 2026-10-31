@@ -28,6 +28,8 @@ SCHEMA_DIR = Path(__file__).resolve().parent / "schemas"
 _OFFLINE = ContextVar("llm_offline", default=False)
 _MEASURING = ContextVar("llm_measuring", default=False)
 _BATCH = ContextVar("llm_batch", default=False)
+_OBSERVERS = ContextVar("llm_result_observers", default=())
+_LOCAL_WRITES = ContextVar("llm_local_writes", default=False)
 _LOG_LOCK = threading.Lock()
 _TOKENS = {"s1": 800, "t1": 400, "t2": 600, "negq": 50}
 _MINIMAL_SCHEMA = {"type": "object", "properties": {"ok": {"type": "boolean"}},
@@ -36,6 +38,24 @@ _MINIMAL_SCHEMA = {"type": "object", "properties": {"ok": {"type": "boolean"}},
 
 class Result(LLMCall):
     cache_hit: bool = False
+
+
+@contextmanager
+def observe_results():
+    """Collect completed results in this context, including copied batch contexts."""
+    results = []
+    token = _OBSERVERS.set((*_OBSERVERS.get(), (results, threading.Lock())))
+    try:
+        yield results
+    finally:
+        _OBSERVERS.reset(token)
+
+
+def _completed(result):
+    for results, lock in _OBSERVERS.get():
+        with lock:
+            results.append(result)
+    return result
 
 
 @dataclass
@@ -49,13 +69,15 @@ class _Transport:
 
 
 @contextmanager
-def run_scope(offline=False, measuring=False):
+def run_scope(offline=False, measuring=False, *, local_writes=False):
     """Only tighten the inherited scope, without mutating process settings."""
     off_token = _OFFLINE.set(_OFFLINE.get() or offline)
     measure_token = _MEASURING.set(_MEASURING.get() or measuring)
+    local_token = _LOCAL_WRITES.set(_LOCAL_WRITES.get() or local_writes)
     try:
         yield
     finally:
+        _LOCAL_WRITES.reset(local_token)
         _MEASURING.reset(measure_token)
         _OFFLINE.reset(off_token)
 
@@ -364,22 +386,25 @@ def call(kind, purpose, model, effort, schema_name, messages, timeout_s=None, ca
             _validate(cached.response, schema)
             result = Result(**(cached.model_dump() | base), cache_hit=True)
             result.latency_ms = (time.monotonic() - started) * 1000
-            if purpose == "shadow" and directory == local and override is None:
+            if (purpose == "shadow" and directory == local and override is None
+                    and not _LOCAL_WRITES.get()):
                 _check_shadow_backend(backend)
                 _write_once(cache_path(paths.CACHE_DIR, sha), _record(result))
             _log(result, override)
-            return result
+            return _completed(result)
     error = _off_error()
     if error:
-        return Result(**base, error=error)
+        return _completed(Result(**base, error=error))
     transport = _backend(model, effort, schema_name, schema, messages, kind, timeout_s)
     result = Result(**(base | {"latency_ms": (time.monotonic() - started) * 1000}),
                     response=transport.response, usage=transport.usage, error=transport.error)
     if result.error is None:
         destination = override or (paths.CACHE_DIR if purpose == "shadow" else local)
+        if _LOCAL_WRITES.get() and purpose != "oracle":
+            destination = local
         _write_once(cache_path(destination, sha), _record(result))
     _log(result, override)
-    return result
+    return _completed(result)
 
 
 async def acall(*args, **kwargs):
