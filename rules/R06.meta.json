@@ -1,0 +1,19 @@
+{
+  "id": "R06",
+  "family": "R06",
+  "origin": "law_compiled",
+  "article_id": "ND15-2018/D26",
+  "anchors": [
+    "ND15-2018/D26/K1",
+    "ND15-2018/D27/K1"
+  ],
+  "law_span": "phải đăng ký nội dung quảng cáo",
+  "source_case_ids": [],
+  "trigger": "Health-protection food with absent advertising confirmation.",
+  "precedence": 6,
+  "attempts": [],
+  "revealed_case_ids": [],
+  "approved_by": null,
+  "approved_at": null,
+  "status": "active"
+}

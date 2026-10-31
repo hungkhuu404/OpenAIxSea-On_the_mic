@@ -1,0 +1,22 @@
+{
+  "id": "R08",
+  "family": "R08",
+  "origin": "law_compiled",
+  "article_id": "ND15-2018/D27",
+  "anchors": [
+    "ND15-2018/D27/K2",
+    "ND87-2026/D71/K4"
+  ],
+  "law_span": [
+    "bác sỹ, dược sỹ",
+    "người bệnh"
+  ],
+  "source_case_ids": [],
+  "trigger": "Speaker role verified upstream as doctor, pharmacist or patient.",
+  "precedence": 8,
+  "attempts": [],
+  "revealed_case_ids": [],
+  "approved_by": null,
+  "approved_at": null,
+  "status": "active"
+}

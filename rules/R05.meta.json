@@ -1,0 +1,23 @@
+{
+  "id": "R05",
+  "family": "R05",
+  "origin": "law_compiled",
+  "article_id": "ND15-2018/D27",
+  "anchors": [
+    "ND15-2018/D27/K6",
+    "ND15-2018/D27/K2",
+    "LQC-2012/D8/K9"
+  ],
+  "law_span": [
+    "chỉ được quảng cáo phù hợp với nội dung đã được xác nhận",
+    "phù hợp với công dụng, tác dụng của sản phẩm đã được công bố"
+  ],
+  "source_case_ids": [],
+  "trigger": "Carries dossier-compliance legal basis; step E decides the verdict.",
+  "precedence": 50,
+  "attempts": [],
+  "revealed_case_ids": [],
+  "approved_by": null,
+  "approved_at": null,
+  "status": "active"
+}
