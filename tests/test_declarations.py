@@ -23,7 +23,6 @@ def test_draft_exists_and_has_no_fine_amount(name):
     assert not re.search(r"\d[\d.,\s]*\s+đồng\b", text, flags=re.IGNORECASE), name
 
 
-def test_context_declaration_is_verbatim_and_pending_confirmation():
+def test_context_declaration_is_verbatim():
     text = (ROOT / "docs" / "DECLARATIONS.md").read_text(encoding="utf-8")
     assert CONTEXT_PARAGRAPH in text
-    assert "TODO (rule keeper): confirm the last clause against the git history before submission." in text

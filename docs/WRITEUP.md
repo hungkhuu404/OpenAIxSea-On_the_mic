@@ -6,7 +6,7 @@ Grounded Claim Ledger helps a platform compare claims made during Vietnamese liv
 
 A seller can move from describing ingredients to promising a treatment in the same turn. The platform needs to separate those claims, identify the product, and compare each claim with the dossier that applied when it was broadcast. A registration, advertising confirmation or recall can change the answer over time. A plausible sentence alone is insufficient grounds for a decision.
 
-TODO (rule keeper): confirm and cite the statutory requirement for platforms to set their own livestream-selling control measures, and the absence of a prescribed method for comparing speech with a product dossier at the broadcast date.
+From 1 July 2026, Article 22(1) of E-commerce Law 122/2025/QH15 requires an e-commerce platform that offers livestream selling to publish livestream rules that include control and prevention measures, and Article 22(5) requires it to obtain the seller's advertising-content confirmation where the law requires one. Decree 248/2026/ND-CP Article 12 sets the minimum content of those rules. Neither provision prescribes how to compare spoken claims with a product's dossier at the broadcast date. [Article 22](../data/law/luat-122-2025-qh15/dieu-22.md), [Decree 248 Article 12](../data/law/nd-248-2026/dieu-12.md)
 
 ## From speech to a reviewable decision
 
@@ -24,9 +24,9 @@ Unresolved claims enter a review queue. A human label adds correction memory; cl
 
 The control policy is asymmetric autonomy: alone, the system can only become more careful. Under this policy, recalls apply automatically; a quarantined rule moves affected decisions toward human review. A new rule or a dossier change that makes outcomes greener needs approval. Similarity helps rank and cluster review items and never chooses a colour. A dry-run preview and backfill are part of the human merge design.
 
-TODO (rule keeper): confirm the complete live adaptive loop, including recall handling and human merge, before claiming a successful end-to-end run.
+We do not claim a complete end-to-end run of the adaptive loop. On the event day a real Codex draft-rule job wrote rule R04b and its tests, and the candidate passed the gate. It was not measured on the sealed set, so it was not merged: [PR #54](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/54) remains open for a human decision.
 
-TODO (rule keeper): report draft-rule job totals, attempts, passed and failed outcomes from eval/clusters/*.json, including failed attempts and each total's population; no cluster run file is present in this snapshot.
+[eval/clusters/pr2.json](../eval/clusters/pr2.json) records the only counted draft-rule job: a cluster of 3 labelled items, 1 job, 2 attempts. Attempt 1 was blocked by gate check 7, the access-log scan; Codex read the returned error lines and attempt 2 passed. Totals over 1 job: 0 passed first try, 1 passed after retry, 0 failed. Two trial runs earlier in the day used scratch evaluation directories and are not included.
 
 ## Deep Domain: law and dossiers through time
 
@@ -36,20 +36,20 @@ The system distinguishes health-protection foods from food supplements because t
 
 `AGENTS.md` gives Codex the project rules and workspace boundaries; `docs/contracts.md` supplies shared names, records and interfaces. These context files let changes across the pipeline, ledger and UI use the same contracts. The development workflow separates changes into branches with tests and review. In the product itself, `codex exec` runs the draft-rule skill inside the restricted adaptive worktree; the gate runs outside that worktree. [Development workflow](../AGENTS.md#git-workflow-every-task), [draft-rule command contract](contracts.md#14-draft-rule-agent-allowed-commands-single-source)
 
-TODO (rule keeper): confirm actual development use of parallel worktrees and Codex-written tests before submission.
+During the event, team members worked in parallel git worktrees on separate branches, and Codex wrote the tests that accompany the changes.
 
-At main snapshot `933463e`, the history has 120 reachable commits. The merged-PR query returns 41 records with a retrieval limit of 300. These describe development history, rather than product accuracy. Sources: `git log --reverse --format="%h %aI %an %s"`, `git rev-list --count HEAD`, and `gh pr list --state merged --limit 300 --json number,title,mergedAt`.
+At main snapshot `2c3663e`, the history has 159 reachable commits. The merged-PR query returns 52 records with a retrieval limit of 300. These describe development history, rather than product accuracy. Sources: `git log --reverse --format="%h %aI %an %s"`, `git rev-list --count HEAD`, and `gh pr list --state merged --limit 300 --json number,title,mergedAt`.
 
 ## Results and limits
 
-TODO (rule keeper): sealed-set numbers (first pass, then v1 → v2 replay)
-
-TODO (rule keeper): add results only from reports/oracle_*.json with standin=false and measured_at on 2026-10-31; include n and measured_at for every result, and use who_decided_v1 / who_decided_v2 with their own denominators for decision shares. No eligible report is present in this snapshot.
+This submission reports no sealed-set results: no oracle report is committed under `reports/`, and the proposed rule R04b was not measured on the sealed set. Accuracy figures are therefore not claimed.
 
 Conformance cannot establish that a dossier is true. In the Kera case, a claim about ten vegetables can match a false declaration. The source record documents later contradictory findings and withdrawal of the declaration; the recall gives the system grounds to act on that problem. Comparing speech with the earlier dossier alone cannot discover it. [Kera source record](../data/demo/kera/SOURCES.md)
 
 The sealed set is small, so a change on a few cases can alter an aggregate substantially. Constructed sentences stay labelled as constructed; they are not presented as original livestream quotations. Speech the press does not attribute remains “Speaker unknown.” When the two votes disagree, the claim goes to a human.
 
-TODO (rule keeper): state the sealed-set sample size and limits using n from an eligible oracle report.
+Known limit: R04 checks negation only inside the extracted claim fragment, so a negation outside it (a turn saying "does not cure disease" extracted as "cure disease") can still produce a red verdict. [Issue #30, item 3](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/issues/30)
+
+The sealed set holds n=44 cases ([FREEZE.json](../data/cases/FREEZE.json)); that is a committed size, not a measured result.
 
 TODO (rule keeper): confirm the actual demonstration on the presenting laptop before describing a successful demo.

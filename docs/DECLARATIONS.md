@@ -4,8 +4,6 @@
 
 `AGENTS.md` and `docs/contracts.md` were written before the event as context files for Codex. They describe the project's conventions, rules and data contracts so that Codex can adapt to the project as fast as possible and the team spends as little time as possible on setup. They contain no code; all code in this repository was written during the event.
 
-TODO (rule keeper): confirm the last clause against the git history before submission.
-
 ## Existing project: prebuilt data
 
 The prebuilt project is [OpenAIxSea-On_the_mic-data at commit `7663e92`](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic-data/tree/7663e92). Its `data/` tree was imported unmodified in the first commit, `65df901`, with author time `2026-10-31T09:59:23+07:00`, and has not changed since. That commit contains only `AGENTS.md`, `docs/` and `data/`. The data repository's `tools/` and `experiments/` folders were not copied. [Import declaration](../README.md#prebuilt-data-declared)
@@ -27,7 +25,7 @@ The label statement comes from the [data repository README at `7663e92`](https:/
 
 The commits after the initial import add the application code, tests, rule pack, gate, adaptive loop, UI and draft-rule skill. They include the shared models and normalization, claim extraction and routing, dossier context, two-vote comparison, legal guardrails, ledger and API, review queue, clustering and isolated rule drafting.
 
-TODO (rule keeper): confirm against git log at submission.
+Checked with `git log --format="%h %aI"` at main `2c3663e`: the only commit authored before 10:00 on 31 October 2026 is `65df901`, which contains no code; the other 158 commits were authored during the event.
 
 ## Open-source libraries and fonts
 
@@ -57,9 +55,9 @@ The data includes press quotations, quotations reported from court proceedings a
 
 A news clip is shown only from the presenting laptop and is never included in the repository. [Local presentation contract](contracts.md#12-presenter-assets-local-only-and-hotkeys)
 
-TODO (rule keeper): clip source line.
+Clip source: Báo Thanh Niên, "Toàn cảnh vụ kẹo rau củ Kera: Bước trượt dài của Quang Linh Vlogs, Thùy Tiên, Hằng Du Mục", YouTube `URORib01rbA`, published 7 April 2025. The segment shown is 03:58.2–04:04.9, with 00:14.9–00:20.7 as a backup. [Media sources](../data/demo/kera/media_sources.md)
 
-TODO (rule keeper): confirm the selected clip's provenance and permission to present it.
+The team did not obtain the publisher's permission. The clip is played unedited, with its source shown on screen, only on the presenting laptop and in the demo video shown in the presentation room. Neither the clip nor that video is included in the repository or published.
 
 ## Demo
 
@@ -67,4 +65,4 @@ The app runs locally on the presenting laptop. Its public mode serves replay and
 
 TODO (rule keeper): confirm the actual laptop run and demonstration outcome before submission.
 
-TODO (rule keeper): demo video link.
+The demo video is shown only in the presentation room and is not published, because it contains the news clip and real names of the people in the Kera case.
