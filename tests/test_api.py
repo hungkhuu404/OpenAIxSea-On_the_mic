@@ -59,7 +59,8 @@ def test_display_speaker(tmp_path, blocked):
         assert turns[1]["display_speaker"] == "Speaker unknown"
         assert turns[2]["display_speaker"] == "Reenactment line (team-written) · [KOL 1]"
         assert turns[3]["display_speaker"] == "[KOL 1]"
-        assert client.get("/api/sessions" + suffix).json()[0]["turns"] == turns
+        listed = client.get("/api/sessions" + suffix).json()
+        assert next(row for row in listed if row["session_id"] == "synthetic")["turns"] == turns
         clip = Session.model_validate(make_session("clip-synthetic").model_dump() | {"channel": "video"})
         clip.turns[0] = Turn.model_validate(clip.turns[0].model_dump() | {"attribution": "not_applicable"})
         ledger.add_session(clip)
