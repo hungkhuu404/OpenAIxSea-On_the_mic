@@ -52,4 +52,4 @@ Known limit: R04 checks negation only inside the extracted claim fragment, so a 
 
 The sealed set holds n=44 cases ([FREEZE.json](../data/cases/FREEZE.json)); that is a committed size, not a measured result.
 
-TODO (rule keeper): confirm the actual demonstration on the presenting laptop before describing a successful demo.
+The demo was recorded as a silent screen capture of the app running locally on the presenting laptop, replaying processed sessions offline; the team narrates it live, and the app stays open for live questions. The adaptive-loop key ran as a labelled dry run.

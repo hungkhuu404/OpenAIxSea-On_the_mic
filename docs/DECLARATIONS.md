@@ -4,6 +4,8 @@
 
 `AGENTS.md` and `docs/contracts.md` were written before the event as context files for Codex. They describe the project's conventions, rules and data contracts so that Codex can adapt to the project as fast as possible and the team spends as little time as possible on setup. They contain no code; all code in this repository was written during the event.
 
+Before the event, the team used Codex Astra to sketch a preliminary architecture (design notes only, no code; not included in the repository).
+
 ## Existing project: prebuilt data
 
 The prebuilt project is [OpenAIxSea-On_the_mic-data at commit `7663e92`](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic-data/tree/7663e92). Its `data/` tree was imported unmodified in the first commit, `65df901`, with author time `2026-10-31T09:59:23+07:00`, and has not changed since. That commit contains only `AGENTS.md`, `docs/` and `data/`. The data repository's `tools/` and `experiments/` folders were not copied. [Import declaration](../README.md#prebuilt-data-declared)
@@ -63,6 +65,6 @@ The team did not obtain the publisher's permission. The clip is played unedited,
 
 The app runs locally on the presenting laptop. Its public mode serves replay and code-only checks; presenter assets remain local. [Run instructions](../README.md#how-to-run), [presentation contract](contracts.md#12-presenter-assets-local-only-and-hotkeys)
 
-TODO (rule keeper): confirm the actual laptop run and demonstration outcome before submission.
+Confirmed on event day: the app ran on the presenting laptop at main `2c3663e` and the demo video was recorded from it.
 
 The demo video is shown only in the presentation room and is not published, because it contains the news clip and real names of the people in the Kera case.
