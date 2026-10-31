@@ -66,7 +66,32 @@ def is_disclaimer(text):
     return previous[-1] * 4 >= len(reference) * 3
 
 
-def negation_scope(text, start, end):
+def disclaimer_spans(text):
+    """Locate fuzzy disclaimer quotations, preferring the earliest equal LCS."""
+    from textnorm import match_key, syllables
+
+    reference = syllables(match_key(DISCLAIMER)[0])
+    spans = []
+    for sentence in re.finditer(r"[^.;!?\n]+", text):
+        words = syllable_matches(sentence.group(), tuple(dict.fromkeys(reference)))
+        while words:
+            previous = [()] * (len(reference) + 1)
+            for word in words:
+                current = [()]
+                for index, expected in enumerate(reference, 1):
+                    matched = previous[index - 1] + (word,) if word.phrase == expected else ()
+                    current.append(max(previous[index], current[-1], matched, key=len))
+                previous = current
+            sequence = previous[-1]
+            if len(sequence) * 4 < len(reference) * 3:
+                break
+            start, end = sequence[0].start, sequence[-1].end
+            spans.append((sentence.start() + start, sentence.start() + end))
+            words = [word for word in words if word.start >= end]
+    return spans
+
+
+def negation_scope(text, start, end, *, affirmative_pairs=False):
     """Return (clearly negated, ambiguous) within the trigger's clause."""
     from textnorm import match_key, syllables
 
@@ -75,6 +100,16 @@ def negation_scope(text, start, end):
     right = min((m.start() for m in boundaries if m.start() >= end), default=len(text))
     preceding = syllables(match_key(text[left:start])[0])
     clause = syllables(match_key(text[left:right])[0])
+    # R04 opts in; extraction and its LLM-facing role verification stay unchanged.
+    if affirmative_pairs:
+        sentence_end = re.search(r"[.;!?\n]", text[right:])
+        limit = right + sentence_end.start() if sentence_end else len(text)
+        following = syllables(match_key(text[right:limit])[0])
+        if any(following[index:index + 2] == ["mà", "còn"] for index in range(len(following) - 1)):
+            ignored = {index for index, word in enumerate(preceding[:-1])
+                       if word == "không" and preceding[index + 1] in ("chỉ", "những")}
+            clause = [word for index, word in enumerate(clause) if index not in ignored]
+            preceding = [word for index, word in enumerate(preceding) if index not in ignored]
     clear = any(word in NEGATIONS for word in preceding[-3:])
     return clear, not clear and any(word in NEGATIONS for word in clause)
 
