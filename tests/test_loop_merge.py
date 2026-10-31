@@ -227,6 +227,8 @@ def test_job_worktree_fallback(world, proof):
         (paths.clusters_dir() / "source.json").write_text(cluster.model_dump_json(), encoding="utf-8")
     root = paths.worktree_root() / value.job_id
     candidate(root, attempts=())
+    (root / "rules/L1_PREDECL.py").write_text(
+        'RULE_ID = "L1_PREDECL"\nraise RuntimeError("unselected sparse module must not load")\n', encoding="utf-8")
     assert m.dry_run(RULE).changed_cases == 1
     assert m.merge(RULE, "fixture").version == 2
 
