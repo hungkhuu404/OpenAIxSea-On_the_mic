@@ -204,11 +204,11 @@ def _case(case_id):
 
 
 def _judge_repeat(args):
+    from collections import Counter
     from dataclasses import asdict
-    from pydantic import BaseModel
     import ledger
+    from pipeline.aggregate import turn_verdict
     from pipeline.context import build_context
-    from pipeline.drafts import VerdictDraft
     from pipeline.judge import judge
     from pipeline.llm import observe_results, run_scope
     from pipeline.router import axis_groups
@@ -229,19 +229,36 @@ def _judge_repeat(args):
     pack, _ = _live_pack()
     ctx = build_context(session.sku_pin, session.as_of, pack)
     started = monotonic()
+    atom_counts = {atom.atom_id: Counter() for atom in atoms}
+    turn_counts = Counter()
+    first_run = None
+    matching = 0
     with run_scope(measuring=True, local_writes=True), observe_results() as results:
         for iteration in range(1, args.n + 1):
+            first_result = len(results)
+            drafts, parts = [], [f"repeat={iteration}"]
             for atom in atoms:
-                draft = judge(atom, ctx.prompt_view(axis_groups(atom.axis)), ctx,
-                              "live", cache_read=False)
-                if isinstance(draft, VerdictDraft):
-                    draft = asdict(draft)
-                elif isinstance(draft, BaseModel):
-                    draft = draft.model_dump()
+                draft = asdict(judge(atom, ctx.prompt_view(axis_groups(atom.axis)), ctx,
+                                     "live", cache_read=False, timeout_s=60))
                 if draft["verdict"] == "red" or draft["decided_by"].startswith("rule:"):
                     raise ValueError("Only code rules may decide red")
-                print(f"repeat={iteration} {session.session_id}:{atom.atom_id} "
-                      f"{draft['verdict']} {draft['decided_by']}")
+                drafts.append(draft)
+                atom_counts[atom.atom_id][draft["verdict"]] += 1
+                parts.append(f"{session.session_id}:{atom.atom_id} {draft['verdict']} "
+                             f"{draft['decided_by']} reason={draft['reason_code'] or '-'}")
+            colour = str(turn_verdict(drafts))
+            turn_counts[colour] += 1
+            fingerprint = tuple((draft["verdict"], draft["reason_code"]) for draft in drafts)
+            if first_run is None:
+                first_run = fingerprint
+            matching += fingerprint == first_run
+            errors = Counter(row.error.kind for row in results[first_result:] if row.error is not None)
+            print(" ".join(parts) + f" turn={colour} errors_by_kind="
+                  + json.dumps(errors, sort_keys=True))
+    for atom in atoms:
+        print(f"atom={atom.atom_id} colours=" + json.dumps(atom_counts[atom.atom_id], sort_keys=True))
+    print("turn_colours=" + json.dumps(turn_counts, sort_keys=True))
+    print(f"matches_run1={matching}/{args.n}")
     counts = _print_summary(results, started)
     return int(bool(counts["errors"] or counts["offline_misses"]))
 

@@ -65,8 +65,10 @@ def integrated(monkeypatch, tmp_path):
                      s1_call_id=result.request_sha256 if result.error is None else None)
                 for i, text in enumerate(spans, 1)]
 
-    def judge(value, items, ctx, purpose, cache_read=True):
+    def judge(value, items, ctx, purpose, cache_read=True, *, timeout_s=None):
         assert ledger._connection.get() is None
+        if timeout_s is not None:
+            assert timeout_s == 60
         votes = llm.map_calls([request(kind, value.span, purpose, cache_read)
                               for kind in ("t1", "t2")], parallel=2)
         if state.barrier is not None:

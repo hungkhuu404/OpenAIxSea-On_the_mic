@@ -1,32 +1,13 @@
 """Step E: independent votes over an axis slice, never a source of red."""
 
 import asyncio
-from collections import Counter
-from dataclasses import dataclass, field
 import json
 
 from core.config import settings
+from core.models import Numbers
 from pipeline import llm
+from pipeline.drafts import VerdictDraft
 from pipeline.extract import _product_name
-
-
-@dataclass
-class VerdictDraft:
-    """The router adds its atom key, then sends asdict(draft) to step F."""
-
-    verdict: str
-    decided_by: str
-    reason_code: str | None = None
-    family: str | None = None
-    permitted_id: str | None = None
-    closest_permitted_id: str | None = None
-    evidence_span: str | None = None
-    law_span: str | None = None
-    numbers: dict | None = None
-    llm_call_ids: list[str] = field(default_factory=list)
-    call_errors: dict[str, int] = field(default_factory=dict)
-    fired_rules: list[str] = field(default_factory=list)
-    speech: str = ""
 
 
 T1_INSTRUCTIONS = """Judge the final claim using only the supplied permitted items for this product.
@@ -110,7 +91,7 @@ def judge(atom, slice_items, ctx, purpose, cache_read=True, *, timeout_s=None):
     else:
         raise RuntimeError("pipeline.judge.judge is blocking: run it in a worker thread "
                            "(asyncio.to_thread)")
-    common = dict(speech=atom.span, llm_call_ids=[])
+    common = dict(llm_call_ids=[])
     if settings.JUDGE_MODE == "off":
         return _abstain("LLM_OFF", **common)
     items = [{"permitted_id": item["permitted_id"], "text": item["text"]} for item in slice_items]
@@ -119,22 +100,22 @@ def judge(atom, slice_items, ctx, purpose, cache_read=True, *, timeout_s=None):
     common["llm_call_ids"] = [first.request_sha256, second.request_sha256]
     errors = [vote.error.kind for vote in (first, second) if vote.error is not None]
     if errors:
-        common["call_errors"] = dict(Counter(errors))
         return _abstain("LLM_TIMEOUT" if "timeout" in errors else "LLM_OFF", **common)
     holistic, per_item = first.response, second.response
     label, entailed = _label(holistic, by_id), _entailed(per_item, by_id)
     if label == "not_enough_info" or entailed is None:
         return _abstain("LLM_NEI", **common)
+    numbers = None if holistic["numbers"] is None else Numbers.model_validate(holistic["numbers"])
     if label == "supported" and entailed:
         chosen = next((row for row in entailed if row["permitted_id"] == holistic["permitted_id"]), entailed[0])
         selected = chosen["permitted_id"]
         span = holistic["evidence_span"] if selected == holistic["permitted_id"] else chosen["evidence_span"]
         return VerdictDraft(verdict="green", decided_by="llm_votes", family="STANDARD",
             permitted_id=selected, evidence_span=_quote(selected, span, by_id),
-            numbers=holistic["numbers"], **common)
+            numbers=numbers, **common)
     if label in ("beyond_scope", "contradicts") and not entailed:
         selected = holistic["closest_permitted_id"]
         return VerdictDraft(verdict="yellow", decided_by="llm_votes", family="R05",
             closest_permitted_id=selected, evidence_span=_quote(selected, holistic["evidence_span"], by_id),
-            numbers=holistic["numbers"], **common)
+            numbers=numbers, **common)
     return _abstain("VOTES_SPLIT", **common)

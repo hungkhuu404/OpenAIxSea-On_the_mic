@@ -10,8 +10,10 @@ import pytest
 
 from core import paths
 from core.config import set_override
-from core.models import Atom, Context, PermittedItem
+from core.models import Atom, PermittedItem
 from pipeline import judge, llm
+from pipeline.context import Context
+from pipeline.drafts import VerdictDraft
 
 
 def judged(*args, **kwargs):
@@ -111,7 +113,6 @@ def test_error_results_abstain(case, votes, kind):
     reason = "LLM_TIMEOUT" if kind == "timeout" else "LLM_OFF"
     assert result["verdict"] == "abstain" and result["reason_code"] == reason
     assert result["decided_by"] == f"abstain:{reason}"
-    assert result["call_errors"] == {kind: 1}
 
 
 def test_timeout_takes_priority_over_another_error(case, votes):
@@ -174,7 +175,7 @@ def test_bad_quote_is_repaired_without_changing_colour_and_numbers_pass_through(
     votes.t1.update(evidence_span="invented evidence", numbers=numbers)
     result = judged(*case, "live")
     assert result["verdict"] == "green" and result["evidence_span"] == items[0]["text"]
-    assert result["numbers"] == numbers
+    assert result["numbers"].model_dump() == numbers
 
 
 def test_only_whitelisted_slice_and_metadata_enter_requests(case, votes):
@@ -203,6 +204,20 @@ def test_draft_integrates_with_finalizer(case, votes):
     assert result.law_span and result.legal_basis == ["ND15-2018/D27/K2"]
 
 
+def test_real_t5_router_accepts_the_shared_judge_draft(case, votes):
+    from pipeline.router import route_atom
+    from rules.registry import load_pack
+
+    atom, _, ctx = case
+    text = "Contains extra oats."
+    atom = atom.model_copy(update={"span": text, "end": len(text)})
+    result = route_atom(atom, ctx, load_pack([], mode="live"), "live",
+        session_id="synthetic", turn_text=text, rule_pack_version=1)
+    assert result.atom_key == "synthetic:t01.a1"
+    assert result.verdict == "green" and result.decided_by == "llm_votes"
+    assert result.llm_call_ids == ["t1-synthetic-sha", "t2-synthetic-sha"]
+
+
 def test_real_offline_miss_makes_no_ledger(case):
     with llm.run_scope(offline=True, measuring=True):
         result = judged(*case, "live")
@@ -221,6 +236,7 @@ def test_sync_judge_rejects_an_event_loop_without_starting_votes(case, votes):
 def test_verdict_draft_is_local_dataclass_with_required_decision_fields(case, votes):
     result = judge.judge(*case, "live")
     assert is_dataclass(result) and result.verdict == "green"
+    assert type(result) is VerdictDraft
     assert result.decided_by == "llm_votes"
     with pytest.raises(TypeError):
         judge.VerdictDraft()
