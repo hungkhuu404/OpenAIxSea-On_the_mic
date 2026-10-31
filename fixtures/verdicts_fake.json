@@ -1,0 +1,132 @@
+[
+  {
+    "verdict_id": 1,
+    "atom_key": "text-de000001:t01.a1",
+    "rule_pack_version": "1",
+    "verdict": "green",
+    "decided_by": "allow_list",
+    "reason_code": null,
+    "fired_rules": [],
+    "permitted_id": "demo_sku:cong_dung:1",
+    "closest_permitted_id": null,
+    "evidence_span": "Demo hạt mây hỗ trợ cảm giác nhẹ bụng.",
+    "law_span": "phù hợp với công dụng, tác dụng của sản phẩm đã được công bố",
+    "numbers": null,
+    "legal_basis": [
+      "ND15-2018/D27/K2"
+    ],
+    "as_of": "2026-10-21",
+    "dossier_hash": "645d56475235736f2d06b4c4ca8c471d3303020890f68590dd8b444c58ecdacb",
+    "llm_call_ids": [],
+    "supersedes": null,
+    "flags": [],
+    "qlnd_category": null,
+    "action": null,
+    "ts": "2026-10-21T09:00:00Z"
+  },
+  {
+    "verdict_id": 2,
+    "atom_key": "text-de000001:t01.a2",
+    "rule_pack_version": "1",
+    "verdict": "red",
+    "decided_by": "rule:R04",
+    "reason_code": null,
+    "fired_rules": [
+      "R04"
+    ],
+    "permitted_id": null,
+    "closest_permitted_id": null,
+    "evidence_span": null,
+    "law_span": "chữa bệnh",
+    "numbers": null,
+    "legal_basis": [
+      "LDUOC-2016/D6/K15"
+    ],
+    "as_of": "2026-10-21",
+    "dossier_hash": "645d56475235736f2d06b4c4ca8c471d3303020890f68590dd8b444c58ecdacb",
+    "llm_call_ids": [],
+    "supersedes": null,
+    "flags": [],
+    "qlnd_category": null,
+    "action": null,
+    "ts": "2026-10-21T09:00:00Z"
+  },
+  {
+    "verdict_id": 3,
+    "atom_key": "text-de000001:t02.a1",
+    "rule_pack_version": "1",
+    "verdict": "yellow",
+    "decided_by": "llm_votes",
+    "reason_code": null,
+    "fired_rules": [],
+    "permitted_id": null,
+    "closest_permitted_id": "demo_sku:cong_dung:1",
+    "evidence_span": "Demo hạt mây hỗ trợ cảm giác nhẹ bụng.",
+    "law_span": "phù hợp với công dụng, tác dụng của sản phẩm đã được công bố",
+    "numbers": null,
+    "legal_basis": [
+      "LQC-2012/D8/K9",
+      "ND15-2018/D27/K2"
+    ],
+    "as_of": "2026-10-21",
+    "dossier_hash": "645d56475235736f2d06b4c4ca8c471d3303020890f68590dd8b444c58ecdacb",
+    "llm_call_ids": [
+      "1111111111111111111111111111111111111111111111111111111111111111",
+      "2222222222222222222222222222222222222222222222222222222222222222"
+    ],
+    "supersedes": null,
+    "flags": [],
+    "qlnd_category": null,
+    "action": null,
+    "ts": "2026-10-21T09:00:00Z"
+  },
+  {
+    "verdict_id": 4,
+    "atom_key": "text-de000001:t02.a2",
+    "rule_pack_version": "1",
+    "verdict": "abstain",
+    "decided_by": "abstain:DOSSIER_FIELD_MISSING",
+    "reason_code": "DOSSIER_FIELD_MISSING",
+    "fired_rules": [],
+    "permitted_id": null,
+    "closest_permitted_id": null,
+    "evidence_span": null,
+    "law_span": null,
+    "numbers": null,
+    "legal_basis": [],
+    "as_of": "2026-10-21",
+    "dossier_hash": "645d56475235736f2d06b4c4ca8c471d3303020890f68590dd8b444c58ecdacb",
+    "llm_call_ids": [],
+    "supersedes": null,
+    "flags": [],
+    "qlnd_category": null,
+    "action": null,
+    "ts": "2026-10-21T09:00:00Z"
+  },
+  {
+    "verdict_id": 5,
+    "atom_key": "text-de000001:t03.a1",
+    "rule_pack_version": "1",
+    "verdict": "abstain",
+    "decided_by": "abstain:LLM_NEI",
+    "reason_code": "LLM_NEI",
+    "fired_rules": [],
+    "permitted_id": null,
+    "closest_permitted_id": null,
+    "evidence_span": null,
+    "law_span": null,
+    "numbers": null,
+    "legal_basis": [],
+    "as_of": "2026-10-21",
+    "dossier_hash": "645d56475235736f2d06b4c4ca8c471d3303020890f68590dd8b444c58ecdacb",
+    "llm_call_ids": [
+      "3333333333333333333333333333333333333333333333333333333333333333",
+      "4444444444444444444444444444444444444444444444444444444444444444"
+    ],
+    "supersedes": null,
+    "flags": [],
+    "qlnd_category": null,
+    "action": null,
+    "ts": "2026-10-21T09:00:00Z"
+  }
+]

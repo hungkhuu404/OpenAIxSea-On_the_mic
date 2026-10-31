@@ -1,0 +1,150 @@
+{
+  "rows": [
+    {
+      "family": "R04",
+      "category": "any",
+      "anchor": "LDUOC-2016/D6/K15",
+      "role": "primary",
+      "valid_from": null,
+      "valid_to": null
+    },
+    {
+      "family": "R05",
+      "category": "TPBVSK",
+      "anchor": "ND15-2018/D27/K6",
+      "role": "primary",
+      "valid_from": null,
+      "valid_to": null
+    },
+    {
+      "family": "R05",
+      "category": "TPBVSK",
+      "anchor": "ND15-2018/D27/K2",
+      "role": "secondary",
+      "valid_from": null,
+      "valid_to": null
+    },
+    {
+      "family": "R05",
+      "category": "thuc_pham_bo_sung",
+      "anchor": "LQC-2012/D8/K9",
+      "role": "primary",
+      "valid_from": null,
+      "valid_to": null
+    },
+    {
+      "family": "R05",
+      "category": "thuc_pham_bo_sung",
+      "anchor": "ND15-2018/D27/K2",
+      "role": "secondary",
+      "valid_from": null,
+      "valid_to": null
+    },
+    {
+      "family": "R06",
+      "category": "any",
+      "anchor": "ND15-2018/D26/K1",
+      "role": "primary",
+      "valid_from": null,
+      "valid_to": null
+    },
+    {
+      "family": "R06",
+      "category": "any",
+      "anchor": "ND15-2018/D27/K1",
+      "role": "secondary",
+      "valid_from": null,
+      "valid_to": null
+    },
+    {
+      "family": "R08",
+      "category": "any",
+      "anchor": "ND15-2018/D27/K2",
+      "role": "primary",
+      "valid_from": null,
+      "valid_to": "2026-05-14"
+    },
+    {
+      "family": "R08",
+      "category": "any",
+      "anchor": "ND87-2026/D71/K4",
+      "role": "secondary",
+      "valid_from": "2026-05-15",
+      "valid_to": null
+    },
+    {
+      "family": "R09",
+      "category": "any",
+      "anchor": "LQC-2012/D8/K11",
+      "role": "primary",
+      "valid_from": null,
+      "valid_to": null
+    },
+    {
+      "family": "R09",
+      "category": "any",
+      "anchor": "ND87-2026/D50/K2/a",
+      "role": "secondary",
+      "valid_from": "2026-05-15",
+      "valid_to": null
+    },
+    {
+      "family": "L1_PREDECL",
+      "category": "any",
+      "anchor": "ND15-2018/D4/K1",
+      "role": "primary",
+      "valid_from": null,
+      "valid_to": null
+    },
+    {
+      "family": "L1_PREDECL",
+      "category": "any",
+      "anchor": "ND15-2018/D5/K2/b",
+      "role": "secondary",
+      "valid_from": null,
+      "valid_to": null
+    },
+    {
+      "family": "L1_RECALL",
+      "category": "any",
+      "anchor": "ND15-2018/D4/K1",
+      "role": "primary",
+      "valid_from": null,
+      "valid_to": null
+    },
+    {
+      "family": "L1_RECALL",
+      "category": "any",
+      "anchor": "ND15-2018/D5/K2/b",
+      "role": "secondary",
+      "valid_from": null,
+      "valid_to": null
+    },
+    {
+      "family": "STANDARD",
+      "category": "thuc_pham_bo_sung",
+      "anchor": "ND15-2018/D27/K2",
+      "role": "primary",
+      "valid_from": null,
+      "valid_to": null
+    },
+    {
+      "family": "STANDARD",
+      "category": "TPBVSK",
+      "anchor": "ND15-2018/D27/K6",
+      "role": "primary",
+      "valid_from": null,
+      "valid_to": null
+    }
+  ],
+  "law_span_by_family_category": {
+    "R05": {
+      "thuc_pham_bo_sung": "phù hợp với công dụng, tác dụng của sản phẩm đã được công bố",
+      "TPBVSK": "chỉ được quảng cáo phù hợp với nội dung đã được xác nhận"
+    },
+    "STANDARD": {
+      "thuc_pham_bo_sung": "phù hợp với công dụng, tác dụng của sản phẩm đã được công bố",
+      "TPBVSK": "chỉ được quảng cáo phù hợp với nội dung đã được xác nhận"
+    }
+  }
+}

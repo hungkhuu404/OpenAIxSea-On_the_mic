@@ -1,0 +1,40 @@
+{
+  "sku_id": "demo_sku",
+  "category_norm": "thuc_pham_bo_sung",
+  "as_of": "2026-10-21",
+  "dossier_state": "PRESENT",
+  "P": [
+    {
+      "permitted_id": "demo_sku:cong_dung:1",
+      "axis_group": "cong_dung",
+      "text": "Demo hạt mây hỗ trợ cảm giác nhẹ bụng.",
+      "confidence": "high",
+      "source_field": "permitted_claims[0].text"
+    },
+    {
+      "permitted_id": "demo_sku:thanh_phan:1",
+      "axis_group": "thanh_phan",
+      "text": "Bột hạt mây 120 mg trong mỗi viên mẫu.",
+      "confidence": "high",
+      "source_field": "ingredients_declared[0].text"
+    },
+    {
+      "permitted_id": "demo_sku:ho_so:1",
+      "axis_group": "ho_so",
+      "text": "Viên hạt mây mô phỏng",
+      "confidence": "high",
+      "source_field": "product.name_on_label.value"
+    }
+  ],
+  "reference_only": [],
+  "null_fields": [
+    "doi_tuong"
+  ],
+  "law_set": [
+    "LDUOC-2016/D6/K15",
+    "LQC-2012/D8/K9",
+    "ND15-2018/D27/K2"
+  ],
+  "session_flags": [],
+  "dossier_hash": "645d56475235736f2d06b4c4ca8c471d3303020890f68590dd8b444c58ecdacb"
+}

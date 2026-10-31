@@ -1,0 +1,41 @@
+{
+  "id": "R04_DEMO",
+  "family": "R04",
+  "origin": "t5",
+  "article_id": "LDUOC-2016/D6/K15",
+  "anchors": [
+    "LDUOC-2016/D6/K15"
+  ],
+  "law_span": "chữa bệnh",
+  "source_case_ids": [
+    "demo-item-1"
+  ],
+  "trigger": "Synthetic treatment phrase in an invented product claim.",
+  "precedence": 40,
+  "attempts": [
+    {
+      "ts": "2026-10-21T09:01:00Z",
+      "gate_result": "fail",
+      "error_lines": [
+        "R04_DEMO check 4: synthetic negative example matched"
+      ],
+      "files_read": [
+        "rules/R04_DEMO.py",
+        "tests/test_R04_DEMO.py"
+      ]
+    },
+    {
+      "ts": "2026-10-21T09:03:00Z",
+      "gate_result": "pass",
+      "error_lines": [],
+      "files_read": [
+        "rules/R04_DEMO.py",
+        "tests/test_R04_DEMO.py"
+      ]
+    }
+  ],
+  "revealed_case_ids": [],
+  "approved_by": null,
+  "approved_at": null,
+  "status": "proposed"
+}

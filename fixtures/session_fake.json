@@ -1,0 +1,36 @@
+{
+  "session_id": "text-de000001",
+  "sku_pin": "demo_sku",
+  "as_of": "2026-10-21",
+  "channel": "livestream",
+  "source": "Invented fixture conversation; all lines are synthetic.",
+  "turns": [
+    {
+      "turn_id": "t01",
+      "speaker_label": "[KOL 1]",
+      "attribution": "press_attributed",
+      "source_claim_ids": [],
+      "text": "Demo hạt mây hỗ trợ cảm giác nhẹ bụng. Demo hạt mây chữa bệnh viêm xoang.",
+      "start_s": null,
+      "end_s": null
+    },
+    {
+      "turn_id": "t02",
+      "speaker_label": "[KOL 2]",
+      "attribution": "press_unknown",
+      "source_claim_ids": [],
+      "text": "Demo hạt mây hỗ trợ cảm giác nhẹ bụng suốt bảy ngày. Demo hạt mây dùng cho trẻ bốn tuổi.",
+      "start_s": null,
+      "end_s": null
+    },
+    {
+      "turn_id": "t03",
+      "speaker_label": "[KOL 3]",
+      "attribution": "constructed",
+      "source_claim_ids": [],
+      "text": "Demo hạt mây có thành phần sương tím.",
+      "start_s": null,
+      "end_s": null
+    }
+  ]
+}
