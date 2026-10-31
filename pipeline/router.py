@@ -68,7 +68,9 @@ def _allow_item(key, items):
     if not key or any(_contains(key, match_key(word)[0]) for word in _INTENSIFIERS):
         return None
     for item in items:
-        if _contains(match_key(item.text)[0], key):
+        item_key = match_key(item.text)[0]
+        # A substring must not discard the dossier item's negation or its scope.
+        if _contains(item_key, key) and (key == item_key or not _has_negation(item_key)):
             return item.permitted_id
     equivalents = REPO_ROOT / "rules" / "equivalents.json"
     if equivalents.is_file():

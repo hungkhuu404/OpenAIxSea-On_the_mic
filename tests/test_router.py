@@ -86,6 +86,19 @@ def test_allow_list_matches_whole_syllables_with_accents():
     assert router._allow_item("", items) is None
 
 
+@pytest.mark.parametrize("negation", router._NEGATION)
+def test_allow_list_never_drops_dossier_negation(negation):
+    item = context().P[0].model_copy(update={"text": f"{negation} chứa đường"})
+    assert router._allow_item(match_key("chứa đường")[0], [item]) is None
+    assert router._allow_item(match_key("đường")[0], [item]) is None
+    assert router._allow_item(match_key(item.text.upper() + ".")[0], [item]) == item.permitted_id
+
+
+def test_allow_list_does_not_treat_partial_syllables_as_negation():
+    item = context().P[0].model_copy(update={"text": "khôngkhí chứa đường"})
+    assert router._allow_item(match_key("chứa đường")[0], [item]) == item.permitted_id
+
+
 @pytest.mark.parametrize("word", router._INTENSIFIERS)
 def test_intensifiers_block_allow_list(word):
     text = f"hỗ trợ tiêu hóa {word}"
@@ -284,6 +297,29 @@ def test_allow_list_real_h2_boundary():
     assert verdict.evidence_span in item.text
     assert verdict.legal_basis == ["ND15-2018/D27/K2"]
     assert verdict.law_span and verdict.action is None
+
+
+def test_positive_atom_against_negated_dossier_reaches_real_h2_without_allow_list(monkeypatch):
+    from pipeline import llm
+
+    calls = []
+    def judge(*args, **kwargs):
+        calls.append("E")
+        return VerdictDraft("abstain", "abstain:LLM_OFF", reason_code="LLM_OFF")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Dossier negation safety must not ask an LLM for an override")
+
+    monkeypatch.setitem(sys.modules, "pipeline.judge", SimpleNamespace(judge=judge))
+    monkeypatch.setattr(llm, "call", forbidden)
+    item = PermittedItem(permitted_id="demo_sku:thanh_phan:1", axis_group="thanh_phan",
+                         text="không chứa đường", confidence="high", source_field="test")
+    verdict = route(atom("chứa đường", axis="thanh_phan"), context(P=[item]))
+    assert calls == ["E"]
+    assert (verdict.verdict, verdict.decided_by, verdict.reason_code) == (
+        "abstain", "abstain:LLM_OFF", "LLM_OFF")
+    assert verdict.permitted_id is None and verdict.legal_basis == []
+    assert verdict.action == "Send to review queue"
 
 
 @pytest.mark.parametrize("shape", ["dataclass", "mapping", "model"])

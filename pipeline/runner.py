@@ -138,22 +138,27 @@ def process_session(session_id, purpose, reprocess=False, *, cache_read=True) ->
     from pipeline.llm import run_scope
 
     stored = _snapshot(ledger.get_session(session_id))
-    prior = {row.atom_key: row for row in stored.verdicts}
-    if prior and not reprocess:
+    if stored.verdicts and not reprocess:
         return _summarize_existing(stored)
     pack, version = _live_pack()
     events = []
     with run_scope(local_writes=not cache_read):
         computed = _compute(stored.session, pack, version, purpose,
                             lambda kind, payload: events.append((kind, payload)), cache_read)
-    for verdict in computed.verdicts:
-        previous = prior.get(verdict.atom_key)
-        verdict.supersedes = previous.verdict_id if previous is not None else None
     with ledger.transaction():
+        stored = _snapshot(ledger.get_session(session_id))
+        if stored.verdicts and not reprocess:
+            return _summarize_existing(stored)
+        if ledger.current_pack().version != version:
+            raise ValueError("Rule pack changed during computation; process the session again")
         if reprocess:
             ledger.replace_atoms(session_id, computed.atoms)
         else:
             ledger.add_atoms(session_id, computed.atoms)
+        prior = {row.atom_key: row for row in ledger.latest_verdicts(session_id)}
+        for verdict in computed.verdicts:
+            previous = prior.get(verdict.atom_key)
+            verdict.supersedes = previous.verdict_id if previous is not None else None
         ids = ledger.append_verdicts(computed.verdicts)
         for verdict, verdict_id in zip(computed.verdicts, ids, strict=True):
             verdict.verdict_id = verdict_id
