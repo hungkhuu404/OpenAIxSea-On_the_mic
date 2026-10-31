@@ -58,7 +58,7 @@ def test_snapshot_restore_mirror_and_worktree_boundary(world, tmp_path):
     ledger.add_session(make_session()); ledger.add_atoms('synthetic', [make_atom()])
     ledger.append_verdicts([make_verdict()])
     demo.snapshot('saved')
-    ledger.append_verdicts([make_verdict().model_copy(update={'flags': ['RECALLED_AFTER']})])
+    ledger.append_verdicts([make_verdict().model_dump(mode='json') | {'flags': ['RECALLED_AFTER']}])
     ledger.add_label({'target': 'synthetic', 'kind': 'report_wrong', 'labeler': 'operator'})
     safety.write(paths.clusters_dir() / 't5-round.json', {'item_ids': ['synthetic']})
     safety.write(world / 'rules/R_SYNTH.meta.json', {'id': 'changed'})
@@ -152,6 +152,8 @@ def test_prepare_twice_and_key_l_reset(world, monkeypatch):
         demo.prepare('R_EXCLUDED', free_port())
         assert len(ledger.list_labels()) == 2 and ledger.list_jobs() == []
         assert safety.read(demo.present_path())['pr1_third_target'].endswith(':t01.a2')
+        assert not list(world.glob('eval.*.bak'))
+        assert list((paths.LOCAL_DIR / 'prepare-backups').glob('*/eval'))
     safety.write(paths.clusters_dir() / 't5-round.json', {'item_ids': ['third']})
     demo.restore('stage', free_port())
     assert not (paths.clusters_dir() / 't5-round.json').exists()

@@ -200,7 +200,9 @@ def prepare(exclude_rule=None, port=8000):
     evaluation = eval_root()
     safety.files(evaluation)
     if evaluation.exists():
-        evaluation.rename(evaluation.with_name(evaluation.name + '.' + stamp() + '.bak'))
+        archived = paths.LOCAL_DIR / 'prepare-backups' / stamp() / 'eval'
+        archived.parent.mkdir(parents=True, exist_ok=True)
+        evaluation.rename(archived)
     old = paths.ledger_db()
     if old.exists():
         # Checkpoint WAL before moving the old database aside.
