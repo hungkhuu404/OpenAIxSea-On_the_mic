@@ -342,7 +342,7 @@ def call(kind, purpose, model, effort, schema_name, messages, timeout_s=None, ca
             raise ValueError("oracle requires LLM_CACHE_DIR outside the repository")
         if backend == "codex":
             raise ValueError("oracle refuses backend codex")
-    if purpose == "shadow" and override is None:
+    if purpose == "shadow" and override is None and _off_error() is None:
         _check_shadow_backend(backend)
     sha = _identity(backend, model, effort, schema_name, schema, messages)
     started = time.monotonic()
@@ -365,6 +365,7 @@ def call(kind, purpose, model, effort, schema_name, messages, timeout_s=None, ca
             result = Result(**(cached.model_dump() | base), cache_hit=True)
             result.latency_ms = (time.monotonic() - started) * 1000
             if purpose == "shadow" and directory == local and override is None:
+                _check_shadow_backend(backend)
                 _write_once(cache_path(paths.CACHE_DIR, sha), _record(result))
             _log(result, override)
             return result

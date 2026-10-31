@@ -180,7 +180,7 @@ def test_transport_failures_retry_and_never_cache(boundary, monkeypatch, mode, e
                     raise subprocess.TimeoutExpired(args, timeout)
                 if mode not in ("missing", "timeout", "exit"):
                     output.write_text({"empty": "", "parse": "not json", "schema": "{}"}[mode], encoding="utf-8")
-                return b"", b"failed sk-fakeSecret12345678901234567890 Bearer abcDEF123456"
+                return b"", b"failed sk-fakeSecret Bearer abcDEF123456"
 
         return Process()
 
@@ -374,6 +374,10 @@ def test_shadow_refuses_mixed_backend(boundary, api_transport):
     with pytest.raises(ValueError, match="mix backends"):
         llm.call(**request(purpose="shadow"))
     assert api_transport[0] == []
+    set_override("OFFLINE", 1)
+    assert llm.call(**request(purpose="shadow")).error.kind == "off"
+    set_override("LLM_BACKEND", "off")
+    assert llm.call(**request(purpose="shadow")).error.detail == "backend off"
 
 
 def test_api_missing_key_is_safe_error(boundary, api_transport):
