@@ -1,60 +1,55 @@
 # Grounded Claim Ledger
 
-**Draft for owner review, not a final submission.** Evidence snapshot: `b639793`. Implementation scope below comes from merged history and the repository contracts; it does not certify a successful demonstration or a measured improvement.
+Grounded Claim Ledger helps a platform compare claims made during Vietnamese livestream sales with the legal dossier of the exact product at the broadcast date. Its standard is **permitted by the dossier at the broadcast date**. Each decision connects the spoken claim, a dossier quotation and the applicable law, so a reviewer can see why the system acted. [Project overview](../README.md)
 
-## Problem and standard
+## The problem
 
-A livestream statement must be checked against the dossier of the exact product and the law applicable on the broadcast date. A document that exists today may not have existed when the claim was made; a later recall must not silently rewrite that earlier decision. Grounded Claim Ledger applies the standard **“permitted by the dossier at the broadcast date”**, rather than treating a plausible statement as established evidence. [Project description](../README.md), [invariants](../AGENTS.md#hard-invariants-tests-enforce-them-never-break-them).
+A seller can move from describing ingredients to promising a treatment in the same turn. The platform needs to separate those claims, identify the product, and compare each claim with the dossier that applied when it was broadcast. A registration, advertising confirmation or recall can change the answer over time. A plausible sentence alone is insufficient grounds for a decision.
 
-TODO (rule keeper): verify and cite the statutory obligation for livestream platforms to establish their own control measures, and the narrower statement that the law does not prescribe a method for comparing spoken claims with the product dossier. The legal-source register identifies the relevant legislation but does not establish that interpretation by itself: [law sources](../data/law/SOURCES.md).
+TODO (rule keeper): confirm and cite the statutory requirement for platforms to set their own livestream-selling control measures, and the absence of a prescribed method for comparing speech with a product dossier at the broadcast date.
 
-## Implemented path and evidence
+## From speech to a reviewable decision
 
-The contracted pipeline is **S0 context → S1 atomic claims → S2 router A–F → S3 aggregation → append-only ledger**. Merged implementation records cover each of these components:
+The pipeline is **S0 context → S1 claim extraction → S2 router A–F → S3 aggregation → append-only ledger**. S0 fixes the product and date, builds the permitted-item set from its dossier, and excludes low-confidence material. S1 splits a turn into atomic claims and locates them in the original text. Each atom keeps its speaker attribution and claim axis, such as ingredients or declared function. [Pipeline contracts](contracts.md)
 
-| Component | Repository evidence |
-|---|---|
-| Product/date context and restricted dossier views | [Context implementation](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/9) |
-| Source-attributed ingestion and atomic extraction | [Ingestion and extraction](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/14), [speaker-proof correction](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/17) |
-| Code rules, routing, replay and CLI | [Rule registry](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/6), [session rules](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/5), [router](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/19), [routing correction](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/25), [flag-state correction](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/27) |
-| Two-vote step and evidence comparison | [Judge implementation](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/23) |
-| Legal-evidence guardrail and aggregation | [Guardrail and aggregation](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/16), [runtime metadata correction](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/21) |
-| Durable verdicts, events, search and session display | [Ledger and API](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/11), [ledger reads](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/20), [flag replacement](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/26), [UI](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/13), [local public-mode interface](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/24) |
-| Scorer, structural gate, log validation and candidate behaviour checks | [Structural gate and scorer](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/22), [behavioural gate](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/18) |
-| Human labels, correction memory and clustering | [Label and clustering implementation](https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/28) |
+The router lets code decide first. Step A recognizes permitted wording; B applies legal rules; C is reserved for low-confidence speech recognition; D checks whether the product, subject and dossier provide enough basis to continue. Only unresolved claims reach E, where two LLM votes compare the claim with the relevant slice of permitted dossier items. One vote assesses support, while the other identifies an entailing dossier item. Agreement can produce green, “Within file,” or yellow, “Beyond file.” Disagreement and insufficient information become abstain, “Needs human.” **Red, “Prohibited,” comes only from code rules or session flags.**
 
-Code decides first. Exact permitted matches can be green; prohibited claims are red only through code rules or session flags. When code cannot decide, the judge combines two separately requested votes. Agreement can support green or yellow; disagreement or insufficient evidence produces abstain, displayed as “Needs human.” The contract requires source-bound quotations and highlights, permitted-item identifiers for dossier evidence, and law anchors filtered by effective date. A match is not a general endorsement of the product. [Decision rules and record contracts](contracts.md#4-enumerations), [pipeline interfaces](contracts.md#8-module-interfaces-names-are-fixed-signatures-are-prose).
+Code checks every quotation and highlighted span against its source text. Step F resolves dossier quotations by permitted-item identifier and filters law anchors by their effective date and the rule's applicability window at the broadcast date. Without an applicable legal basis, the claim goes to a human. The LLM cannot invent a source quotation or turn its own conclusion into red. [Decision invariants](../AGENTS.md#hard-invariants-tests-enforce-them-never-break-them)
 
-## Build direction: Autonomous & Adaptive; Deep Domain
+S3 combines atom verdicts into turn and session outcomes. The ledger appends verdicts and events, preserving earlier decisions when a later pack supersedes them. The interface puts the claim, dossier quotation and legal basis together and shows who decided: code, LLM votes or human review. Its public mode uses replay and code-only sentence checks without calling an LLM or Codex. [Records and interface](contracts.md)
 
-The **Deep Domain** foundation combines effective-dated law anchors, category-specific legal bases, product records and dossier states by date. The source registers distinguish official records, press reporting and lower-confidence material. Lower-confidence references must not enter the permitted-claim set. [Law basis](../AGENTS.md#law-basis-table-ruleslaw_basisjson), [registry sources](../data/registry/SOURCES.md), [case and evidence sources](../data/cases/SOURCES.md), [dossier contract](contracts.md#6-permitted-items-axis-slices-and-step-d).
+## Autonomous & Adaptive, with asymmetric authority
 
-The **Autonomous & Adaptive** direction is a contracted extension: abstain queue → human label → clustering → Codex draft-rule job in a sparse worktree without evaluation sets → external gate → sealed-set measurement → human merge. Recalls are specified to apply automatically. Asymmetric autonomy means that unattended actions may make the system more cautious; changes that expand its authority require human approval. Near-hit similarity suggests review candidates and never chooses a verdict. [Adaptive-loop interfaces](contracts.md#8-module-interfaces-names-are-fixed-signatures-are-prose), [autonomy invariants](../AGENTS.md#hard-invariants-tests-enforce-them-never-break-them).
+Unresolved claims enter a review queue. A human label adds correction memory; clustering groups related items into a draft-rule job. Codex receives that cluster in a sparse worktree containing the rule-writing inputs and law corpus, without the evaluation sets. It proposes a rule, metadata and tests. An external gate checks the candidate and its access log; failed attempts return error lines for a bounded retry. Sealed-set measurement and a human merge stand between the proposal and live decisions. [Adaptive-loop contracts](contracts.md#8-module-interfaces-names-are-fixed-signatures-are-prose)
 
-TODO (rule keeper): verify implementation and integration evidence for the gate, adaptive jobs, draft-rule skill, recall handling and human merge before presenting this extension as a completed loop. Their contracts are not evidence of a successful run.
+The control policy is asymmetric autonomy: alone, the system can only become more careful. Under this policy, recalls apply automatically; a quarantined rule moves affected decisions toward human review. A new rule or a dossier change that makes outcomes greener needs approval. Similarity helps rank and cluster review items and never chooses a colour. A dry-run preview and backfill are part of the human merge design.
 
-## Codex and the build record
+TODO (rule keeper): confirm the complete live adaptive loop, including recall handling and human merge, before claiming a successful end-to-end run.
 
-The documented workflow supplies Codex with `AGENTS.md` and `docs/contracts.md`, uses separate task worktrees, and requires tests and review before merge. The adaptive-loop contract specifies a draft-rule skill and `codex exec` with constrained commands and restricted source access. This describes the configured development method and intended product use, not proof that a live draft-rule job has run. [Workflow and sparse-worktree restrictions](../AGENTS.md), [draft-rule contract](contracts.md#14-draft-rule-agent-allowed-commands-single-source).
+TODO (rule keeper): report draft-rule job totals, attempts, passed and failed outcomes from eval/clusters/*.json, including failed attempts and each total's population; no cluster run file is present in this snapshot.
 
-The first commit is `65df901`, with author time **`2026-10-31T09:59:23+07:00`**, exactly as recorded by Git. At snapshot `b639793`, `git rev-list --count HEAD` reports **86 commits in the complete reachable history**. The merged-PR query returned **28 merged records**, with a query limit of 300. These are build-provenance counts, not evaluation results. Sources: `git log --reverse --format="%h %aI %an %s"`, `git rev-list --count HEAD`, and `gh pr list --state merged --limit 300 --json number,title,mergedAt`.
+## Deep Domain: law and dossiers through time
 
-TODO (rule keeper): confirm actual Codex use, including Codex-written tests and parallel worktrees, from approved evidence before making an authorship claim; human Git author metadata alone does not establish assistant use.
+The system distinguishes health-protection foods from food supplements because their advertising bases differ. Law anchors carry effective dates; dossiers carry declaration, advertising-confirmation and recall states. The same speech can therefore receive different treatment at different broadcast dates without erasing its history. Official records, press quotations and lower-confidence material retain their provenance, and only eligible dossier fields enter the permitted-item set. [Law sources](../data/law/SOURCES.md), [registry sources](../data/registry/SOURCES.md), [permitted-item contract](contracts.md#6-permitted-items-axis-slices-and-step-d)
 
-No cluster run JSON was available in `eval/clusters/` at this snapshot.
+## How Codex fits the build and the product
 
-TODO (rule keeper): report draft-rule jobs, attempts, passes and failures from persisted cluster run records, including unsuccessful attempts; no adaptive-loop funnel is claimed in this draft.
+`AGENTS.md` gives Codex the project rules and workspace boundaries; `docs/contracts.md` supplies shared names, records and interfaces. These context files let changes across the pipeline, ledger and UI use the same contracts. The development workflow separates changes into branches with tests and review. In the product itself, `codex exec` runs the draft-rule skill inside the restricted adaptive worktree; the gate runs outside that worktree. [Development workflow](../AGENTS.md#git-workflow-every-task), [draft-rule command contract](contracts.md#14-draft-rule-agent-allowed-commands-single-source)
 
-## Results and limitations
+TODO (rule keeper): confirm actual development use of parallel worktrees and Codex-written tests before submission.
 
-No eligible oracle report was available in `reports/` at this snapshot. A result may be added only from an `oracle_*.json` report with `standin: false` and an event-date `measured_at`. Every result must retain its denominator and measurement timestamp; who-decided shares must use the report's own `who_decided_v1` or `who_decided_v2` denominator. Test fixtures, unit-test totals, demo outcomes and commitment metadata are not substitutes. [Oracle report contract](contracts.md#5-records).
+At main snapshot `933463e`, the history has 120 reachable commits. The merged-PR query returns 41 records with a retrieval limit of 300. These describe development history, rather than product accuracy. Sources: `git log --reverse --format="%h %aI %an %s"`, `git rev-list --count HEAD`, and `gh pr list --state merged --limit 300 --json number,title,mergedAt`.
+
+## Results and limits
 
 TODO (rule keeper): sealed-set numbers (first pass, then v1 → v2 replay)
 
-Agreement with a dossier does not prove that the dossier is true. The Kera source register documents the declared vegetable ingredients, later contradictory findings and withdrawal of the self-declaration. A “ten vegetables” ingredients statement can agree with an inaccurate declaration; external findings and a later recall expose a limitation that textual conformance alone cannot resolve. This is not a claim that a particular demo verdict passed. [Kera sources](../data/demo/kera/SOURCES.md).
+TODO (rule keeper): add results only from reports/oracle_*.json with standin=false and measured_at on 2026-10-31; include n and measured_at for every result, and use who_decided_v1 / who_decided_v2 with their own denominators for decision shares. No eligible report is present in this snapshot.
 
-Constructed sentences must remain labelled as constructed, press-unattributed speech must remain unattributed, and vote disagreement must go to human review. These attribution and decision requirements are explicit in [the contracts](contracts.md#4-enumerations).
+Conformance cannot establish that a dossier is true. In the Kera case, a claim about ten vegetables can match a false declaration. The source record documents later contradictory findings and withdrawal of the declaration; the recall gives the system grounds to act on that problem. Comparing speech with the earlier dossier alone cannot discover it. [Kera source record](../data/demo/kera/SOURCES.md)
 
-TODO (rule keeper): state the small-sample limitation using the denominator of an eligible oracle report; do not infer the measured population from commitment metadata.
+The sealed set is small, so a change on a few cases can alter an aggregate substantially. Constructed sentences stay labelled as constructed; they are not presented as original livestream quotations. Speech the press does not attribute remains “Speaker unknown.” When the two votes disagree, the claim goes to a human.
 
-TODO (rule keeper): confirm the complete demonstration on the presenting laptop, with its actual configuration and unresolved scenes, before declaring that the demo passed.
+TODO (rule keeper): state the sealed-set sample size and limits using n from an eligible oracle report.
+
+TODO (rule keeper): confirm the actual demonstration on the presenting laptop before describing a successful demo.
