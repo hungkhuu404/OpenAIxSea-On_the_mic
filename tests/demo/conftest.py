@@ -71,7 +71,7 @@ def pytest_runtest_makereport(item, call):
         if call.excinfo:
             error = call.excinfo.value
             if isinstance(error, (AssertionError, pytest.skip.Exception, pytest.fail.Exception)):
-                detail = str(error)
+                detail = str(error).split("\n", 1)[0]
             else:
                 detail = f"{type(error).__name__}: scene raised an error; see pytest output"
         REPORT.add(label, status, detail)

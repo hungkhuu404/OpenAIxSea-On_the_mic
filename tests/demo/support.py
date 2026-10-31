@@ -111,6 +111,7 @@ class DemoReport:
     scenes: dict = field(default_factory=dict)
     soft: list = field(default_factory=list)
     started: float = field(default_factory=perf_counter)
+    elapsed_ms: float | None = None
 
     def add(self, scene, status, detail=""):
         # A skip/failure during setup has no call report, so it is retained.
@@ -122,11 +123,12 @@ class DemoReport:
             lines.append(f"{scene} | {status} | {detail.replace('|', '/')}")
         counts = {status: sum(row[0] == status for row in self.scenes.values()) for status in ("PASS", "FAIL", "SKIP")}
         lines.extend(["", " · ".join(f"{key} {value}" for key, value in counts.items()),
-                      f"Total: {(perf_counter() - self.started) * 1000:.3f} ms", "", "Soft checks (report only)"])
+                      f"Total: {self.elapsed_ms if self.elapsed_ms is not None else (perf_counter() - self.started) * 1000:.3f} ms", "", "Soft checks (report only)"])
         for value in self.soft:
             lines.append(json.dumps(value, ensure_ascii=False, sort_keys=True))
         return "\n".join(lines) + "\n"
 
     def write(self):
+        self.elapsed_ms = (perf_counter() - self.started) * 1000
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(self.render(), encoding="utf-8", newline="\n")

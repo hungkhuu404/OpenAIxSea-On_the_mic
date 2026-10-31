@@ -45,7 +45,11 @@ def _query(mode):
 
 
 def _assert_no_marker(value, marker, condition):
-    assert marker not in json.dumps(value, ensure_ascii=False), f"{condition}: protected presenter text was exposed"
+    assert marker not in json.dumps(value, ensure_ascii=False), f"{condition}: observed protected_text_exposed=True"
+
+
+def _equal(observed, expected, label):
+    assert observed == expected, f"{label}: observed {observed!r}; expected {expected!r}"
 
 
 def test_expected_loaded(demo_environment, expected_path):
@@ -61,7 +65,8 @@ def test_kera_january(kera, expected_path):
                     if line.startswith("**[KOL ")]
     original = source_turns[5].split("`", 1)[0]
     expected_text = re.sub(r"^\*\*\[KOL \d+\]\*\*\s*:?[ \t]*", "", original).strip()
-    assert kera.turn(JAN, "t06")["text"].strip() == expected_text, "t06: annotation text survived ingestion"
+    annotation_free = kera.turn(JAN, "t06")["text"].strip() == expected_text
+    assert annotation_free, f"t06: observed annotation_free={annotation_free}"
     unknown = {"t13", "t19", "t20"}
     constructed = {"t01", "t02", "t03", "t04", "t09", "t14", "t18", "t22", "t23", "t24"}
     for turn in session["turns"]:
@@ -90,7 +95,8 @@ def test_kera_january(kera, expected_path):
     for query in ("đĩa rau", "dia rau", "DIA RAU", "dĩa rau"):
         turns = {row["turn_id"] for row in kera.search(query, JAN)}
         assert turns == {"t07", "t20", "t21"}, f"Search variant: observed turn ids {sorted(turns)}"
-    assert session["atoms"] == kera.session(DEC)["atoms"], "S1 atoms changed with the broadcast date"
+    december_atoms = kera.session(DEC)["atoms"]
+    assert session["atoms"] == december_atoms, f"S1 date-independent atoms: observed equal=False; January count={len(session['atoms'])}; December count={len(december_atoms)}"
     if expected_path:
         try:
             expected = read_expected(expected_path)
@@ -113,9 +119,9 @@ def test_speaker_display(kera, mode):
     response = asyncio.run(kera.request(f"/api/sessions/{JAN}" + _query(mode), public=mode == "public"))
     turns = {turn["turn_id"]: turn for turn in response["turns"]}
     if mode == "presenter":
-        assert turns["t07"]["display_speaker"] == "TEST NAME 1", "presenter: t07 speaker differs"
-        assert turns["t20"]["display_speaker"] == "Speaker unknown", "presenter: unknown speaker was attributed"
-        assert turns["t01"]["display_speaker"] == "Reenactment line (team-written) · " + turns["t01"]["speaker_label"], "presenter: constructed speaker label differs"
+        _equal(turns["t07"]["display_speaker"], "TEST NAME 1", "presenter t07")
+        _equal(turns["t20"]["display_speaker"], "Speaker unknown", "presenter t20")
+        _equal(turns["t01"]["display_speaker"], "Reenactment line (team-written) · " + turns["t01"]["speaker_label"], "presenter t01")
         _assert_no_marker(turns["t01"], "TEST NAME", mode)
     else:
         _assert_no_marker(response, "TEST NAME", mode)
@@ -152,10 +158,10 @@ def test_opening_clip(demo_environment, mode):
     response = asyncio.run(h.request("/api/sessions/clip-a1" + _query(mode), public=mode == "public"))
     if mode == "presenter":
         for clip in ("a1", "a2"):
-            assert manifest["clips"][clip]["speaker_line"] == "TEST SPEAKER LINE", f"{clip}: speaker_line differs"
-            assert manifest["clips"][clip]["source_line"] == "TEST SOURCE LINE", f"{clip}: source_line differs"
-        assert response["speaker_line"] == "TEST SPEAKER LINE", "clip session: speaker_line differs"
-        assert response["source_line"] == "TEST SOURCE LINE", "clip session: source_line differs"
+            _equal(manifest["clips"][clip]["speaker_line"], "TEST SPEAKER LINE", f"{clip} speaker_line")
+            _equal(manifest["clips"][clip]["source_line"], "TEST SOURCE LINE", f"{clip} source_line")
+        _equal(response["speaker_line"], "TEST SPEAKER LINE", "clip session speaker_line")
+        _equal(response["source_line"], "TEST SOURCE LINE", "clip session source_line")
     else:
         _assert_no_marker(manifest, "TEST SPEAKER LINE", mode)
         _assert_no_marker(response, "TEST SPEAKER LINE", mode)
@@ -163,9 +169,9 @@ def test_opening_clip(demo_environment, mode):
         _assert_no_marker(response, "TEST SOURCE LINE", mode)
     assert response["turns"], "clip-a1: no transcript turns"
     for turn in response["turns"]:
-        assert turn["speaker_label"] == "[unidentified]", "clip transcript: speaker label differs"
-        assert turn["attribution"] == "not_applicable", "clip transcript: attribution differs"
-        assert turn["display_speaker"] == "Speaker: unidentified", "clip transcript: display speaker differs"
+        _equal(turn["speaker_label"], "[unidentified]", "clip transcript speaker_label")
+        _equal(turn["attribution"], "not_applicable", "clip transcript attribution")
+        _equal(turn["display_speaker"], "Speaker: unidentified", "clip transcript display_speaker")
 
 
 def test_kera_december(kera):
@@ -194,7 +200,8 @@ def test_recall(kera, expected_path):
     events.apply_recall("kera", date(2025, 3, 24), "Synthetic recall rehearsal")
     ms = (perf_counter() - start) * 1000
     after = kera.verdicts(JAN)
-    assert {row["atom_key"]: row["verdict"] for row in after} == before, "Recall changed broadcast-date colours"
+    changed_colours = sum(row["verdict"] != before.get(row["atom_key"]) for row in after)
+    assert {row["atom_key"]: row["verdict"] for row in after} == before, f"Recall: observed {changed_colours} changed colours; before={len(before)} atoms; after={len(after)} atoms"
     flagged = [row for row in after if "RECALLED_AFTER" in row["flags"]]
     assert len(flagged) == green_count, f"Recall: observed {len(flagged)} flags for {green_count} green atoms"
     emitted = [event for event in kera.events() if event["type"] == "recall.applied"]
@@ -226,7 +233,7 @@ def test_raw_path(demo_environment):
     assert prohibited["decided_by"] == "rule:R04", f"Raw path: observed decider {prohibited['decided_by']}"
     index = json.loads((h.root / "data/law/index.json").read_text(encoding="utf-8"))
     law = next(row["text"] for row in index if row["id"] == "LDUOC-2016/D6/K15")
-    assert prohibited["law_span"] and textnorm.law_normalize(prohibited["law_span"]) in textnorm.law_normalize(law), "Raw path: law span is not verbatim"
+    assert prohibited["law_span"] and textnorm.law_normalize(prohibited["law_span"]) in textnorm.law_normalize(law), f"Raw path: observed law_span={prohibited['law_span']!r}"
     ordinary = record(raw.check_sentence("dk_betics_gold", date(2026, 10, 31), "Giúp giảm nguy cơ biến chứng do tiểu đường"))
     assert ordinary["verdict"] != "red", f"Raw negative: observed {ordinary['verdict']} ({ordinary['decided_by']})"
 
@@ -257,10 +264,12 @@ def test_pr1_dry_trigger(demo_environment):
         stored = h.session(session_id)
         atom = select_pr1_target(sentence, stored["atoms"], h.verdicts(session_id))
         targets.append(f"{session_id}:{atom['atom_id']}")
-    assert ledger.list_jobs() == [], "PR1: fresh ledger already contains jobs"
+    jobs = ledger.list_jobs()
+    assert jobs == [], f"PR1: observed {len(jobs)} jobs in a fresh ledger"
     for target in targets[:2]:
         labels.record_label(target, "red", "R04", "hungkhuu404", auto_trigger=True)
-        assert ledger.list_jobs() == [], "PR1: a job started before the third label"
+        jobs = ledger.list_jobs()
+        assert jobs == [], f"PR1: observed {len(jobs)} jobs before the third label"
     start = perf_counter()
     labels.record_label(targets[2], "red", "R04", "hungkhuu404", auto_trigger=True)
     jobs = []
@@ -273,7 +282,8 @@ def test_pr1_dry_trigger(demo_environment):
     elapsed = perf_counter() - start
     assert len(jobs) == 1, f"PR1: observed {len(jobs)} jobs after the third label"
     assert elapsed <= 1, f"PR1: trigger took {elapsed * 1000:.3f} ms"
-    assert record(next(iter(jobs)))["dry"] is True, "PR1: job is not marked dry"
+    dry = record(next(iter(jobs)))["dry"]
+    assert dry is True, f"PR1: observed dry={dry}"
     event_types = {event["type"] for event in h.events()}
     assert {"t5.cluster", "job.started"} <= event_types, f"PR1: observed event types {sorted(event_types)}"
 
@@ -305,30 +315,32 @@ def test_merge_fresh_ledger(demo_environment):
                                    as_of=date(2026, 10, 31), dossier_hash="0" * 64, ts="2026-10-31T03:00:00Z")])
     before = h.verdicts(session_id)
     before_counts = record(aggregate.who_decided([Verdict.model_validate(row) for row in before]))
-    assert ledger.list_jobs(rule_id=rule_id) == [], "Merge fixture unexpectedly has a ledger job"
+    jobs = ledger.list_jobs(rule_id=rule_id)
+    assert jobs == [], f"Merge fixture: observed {len(jobs)} ledger jobs"
     pack = registry.load_pack([*old_pack.active, rule_id], mode="measure")
-    assert pack.mode == "measure", "Unapproved candidate was not loaded for measurement"
+    _equal(pack.mode, "measure", "Unapproved candidate pack mode")
     dry = record(merger.dry_run(rule_id))
     assert dry["changed_atoms"] >= 1 and dry["changed_cases"] >= 1, f"Dry run: observed {dry['changed_atoms']} atoms / {dry['changed_cases']} cases"
-    assert ledger.current_pack().version == old_pack.version, "Dry run mutated the live pack"
-    assert h.verdicts(session_id) == before, "Dry run stored measure verdicts"
+    _equal(ledger.current_pack().version, old_pack.version, "Dry-run live pack")
+    assert h.verdicts(session_id) == before, "Dry run: observed stored_verdicts_unchanged=False"
     start = perf_counter()
     merger.merge(rule_id, "hungkhuu404")
     ms = (perf_counter() - start) * 1000
     new_pack = ledger.current_pack()
-    assert new_pack.version > old_pack.version, "Merge did not create a new pack version"
-    assert new_pack.approved_by == "hungkhuu404", "Merge pack has no human approver"
+    assert new_pack.version > old_pack.version, f"Merge: observed version {new_pack.version}; previous {old_pack.version}"
+    _equal(new_pack.approved_by, "hungkhuu404", "Merge approver")
     after = h.verdicts(session_id)
     old_ids = {row["atom_key"]: row["verdict_id"] for row in before}
     changed = [row for row in after if row["verdict_id"] != old_ids[row["atom_key"]]]
-    assert changed, "Merge backfill changed no verdicts"
+    assert changed, "Merge backfill: observed 0 changed verdicts"
     for row in changed:
         assert row["supersedes"] == old_ids[row["atom_key"]], f"Backfill: observed supersedes {row['supersedes']}"
     after_counts = record(aggregate.who_decided([Verdict.model_validate(row) for row in after]))
-    assert before_counts["code"] != after_counts["code"], "Merge did not change who_decided code counts"
+    assert before_counts["code"] != after_counts["code"], f"Who decided: observed code count {after_counts['code']}; previous {before_counts['code']}"
     h.reporter.soft.append({"merge_backfill_ms": f"{ms:.3f} ms", "budget": "1000.000 ms", "within_budget": ms <= 1000})
     # All Git objects, candidate files and any branches belong to this copy.
-    assert git(h.root, "rev-parse", "--show-toplevel").decode().strip().replace("\\", "/") == h.root.as_posix()
+    inside_copy = git(h.root, "rev-parse", "--show-toplevel").decode().strip().replace("\\", "/") == h.root.as_posix()
+    assert inside_copy, f"Merge Git: observed inside_temporary_copy={inside_copy}"
 
 
 def _ledger_rows(path):
@@ -357,11 +369,12 @@ def test_demo_state_restore(kera):
     state_cli("snapshot")
     snapshots = kera.root / ".local" / "snapshots"
     texts = [path.read_text(encoding="utf-8", errors="ignore") for path in snapshots.rglob("*.json")]
-    assert any(line in text for text in texts), "Snapshot does not carry the run configuration line"
+    has_config = any(line in text for text in texts)
+    assert has_config, f"Snapshot: observed carries_configuration={has_config}"
     atom = next(iter(kera.session(JAN)["atoms"]))
     labels.record_label(f"{JAN}:{atom['atom_id']}", "abstain", None, "hungkhuu404", auto_trigger=False)
     events.apply_recall("kera", date(2025, 3, 24), "Synthetic snapshot recall")
-    assert _ledger_rows(settings.LEDGER_DB) != before_rows, "Snapshot test did not mutate the ledger"
+    assert _ledger_rows(settings.LEDGER_DB) != before_rows, "Snapshot setup: observed ledger_mutated=False"
     state_cli("restore")
-    assert _ledger_rows(settings.LEDGER_DB) == before_rows, "Restore did not recover all ledger rows"
-    assert kera.protected_state() == before_files, "Restore changed eval files or rule metadata"
+    assert _ledger_rows(settings.LEDGER_DB) == before_rows, "Restore: observed ledger_rows_equal_snapshot=False"
+    assert kera.protected_state() == before_files, "Restore: observed eval_and_rule_metadata_equal_snapshot=False"
