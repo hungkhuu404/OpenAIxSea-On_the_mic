@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "properties": {
+    "label": {"type": "string", "enum": ["supported", "beyond_scope", "contradicts", "not_enough_info"]},
+    "permitted_id": {"type": ["string", "null"]},
+    "closest_permitted_id": {"type": ["string", "null"]},
+    "evidence_span": {"type": ["string", "null"]},
+    "numbers": {
+      "type": ["object", "null"],
+      "properties": {
+        "claim": {"type": ["number", "string", "null"]},
+        "dossier": {"type": ["number", "string", "null"]},
+        "consistent": {"type": ["boolean", "null"]}
+      },
+      "required": ["claim", "dossier", "consistent"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["label", "permitted_id", "closest_permitted_id", "evidence_span", "numbers"],
+  "additionalProperties": false
+}
