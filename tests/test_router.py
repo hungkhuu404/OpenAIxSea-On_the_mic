@@ -1,6 +1,7 @@
 """S2 uses synthetic dossier items and fake collaborators, never a backend."""
 
 from datetime import date
+import json
 import sys
 from types import SimpleNamespace
 
@@ -22,9 +23,9 @@ def no_equivalents(monkeypatch, tmp_path):
 def collaborators(monkeypatch):
     calls = []
 
-    def finalize(draft, ctx, version):
+    def finalize(draft, ctx, version, *, pack):
         assert isinstance(draft, dict)
-        calls.append(("F", draft, version))
+        calls.append(("F", draft, version, pack))
         return Verdict(atom_key=draft["atom_key"], rule_pack_version=version,
                        verdict=draft["verdict"], decided_by=draft["decided_by"],
                        reason_code=draft["reason_code"], fired_rules=draft["fired_rules"],
@@ -84,6 +85,19 @@ def test_allow_list_matches_whole_syllables_with_accents():
     assert router._allow_item("tiê", items) is None
     assert router._allow_item("tieu hoa", items) is None
     assert router._allow_item("", items) is None
+
+
+@pytest.mark.parametrize("negation", router._NEGATION)
+def test_allow_list_never_drops_dossier_negation(negation):
+    item = context().P[0].model_copy(update={"text": f"{negation} chứa đường"})
+    assert router._allow_item(match_key("chứa đường")[0], [item]) is None
+    assert router._allow_item(match_key("đường")[0], [item]) is None
+    assert router._allow_item(match_key(item.text.upper() + ".")[0], [item]) == item.permitted_id
+
+
+def test_allow_list_does_not_treat_partial_syllables_as_negation():
+    item = context().P[0].model_copy(update={"text": "khôngkhí chứa đường"})
+    assert router._allow_item(match_key("chứa đường")[0], [item]) == item.permitted_id
 
 
 @pytest.mark.parametrize("word", router._INTENSIFIERS)
@@ -146,6 +160,14 @@ def test_allow_list_stops_rules_and_finalizes(collaborators):
         "green", "allow_list", "demo_sku:cong_dung:1")
     assert result.rule_pack_version == 7 and result.action == "review"
     assert [(row[0], row[1]["family"]) for row in collaborators] == [("F", "STANDARD")]
+
+
+def test_runtime_pack_is_forwarded_to_guardrail(collaborators):
+    from rules.registry import load_pack
+
+    rules = load_pack([], mode="measure")
+    route(rules=rules)
+    assert collaborators[-1][3] is rules
 
 
 def test_code_rule_precedence_and_all_fired_rules(collaborators):
@@ -284,6 +306,67 @@ def test_allow_list_real_h2_boundary():
     assert verdict.evidence_span in item.text
     assert verdict.legal_basis == ["ND15-2018/D27/K2"]
     assert verdict.law_span and verdict.action is None
+
+
+def test_proposed_candidate_measure_pack_reaches_real_guardrail(monkeypatch, tmp_path):
+    from rules import registry
+
+    registered = registry.all_rules()
+    meta = next(rule.meta for rule in registered if rule.rule_id == "R04").model_dump(mode="json")
+    meta.update(id="R12_ROUTER_CANDIDATE", origin="t5", status="proposed",
+                approved_by=None, approved_at=None)
+    assert all(rule.rule_id != meta["id"] for rule in registered)
+    directory = tmp_path / "candidate with spaces" / "rules"
+    directory.mkdir(parents=True)
+    (directory / f"{meta['id']}.meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    constants = {"RULE_ID": meta["id"], "FAMILY": meta["family"], "ORIGIN": meta["origin"],
+                 "ANCHORS": meta["anchors"], "LAW_SPAN": meta["law_span"],
+                 "PRECEDENCE": meta["precedence"]}
+    source = "".join(f"{name} = {value!r}\n" for name, value in constants.items())
+    source += ("from rules._common import make_hit\n"
+               "def check(atom_view):\n"
+               "    return [make_hit(RULE_ID, FAMILY, atom_view.text, ANCHORS[0], LAW_SPAN, PRECEDENCE)]\n")
+    (directory / f"{meta['id']}.py").write_text(source, encoding="utf-8")
+    rules = registry.load_pack([meta["id"]], mode="measure", candidate_dir=directory.parent)
+    assert rules.mode == "measure" and len(rules.active) == 1
+    assert rules.active[0].meta.status == "proposed"
+    assert rules.active[0].meta.approved_by is None
+
+    def no_tree_lookup():
+        pytest.fail("Candidate metadata must come from the supplied runtime pack")
+
+    monkeypatch.setattr(registry, "all_rules", no_tree_lookup)
+    result = route(atom("chữa bệnh"), rules=rules)
+    assert (result.verdict, result.decided_by, result.fired_rules) == (
+        "red", f"rule:{meta['id']}", [meta["id"]])
+    assert result.rule_pack_version == 7
+    assert result.legal_basis == ["LDUOC-2016/D6/K15"]
+    assert result.law_span == rules.active[0].meta.law_span == "chữa bệnh"
+    assert result.qlnd_category == "Disease-treatment claim for a non-drug"
+    assert result.action == "Remove or warn"
+
+
+def test_positive_atom_against_negated_dossier_reaches_real_h2_without_allow_list(monkeypatch):
+    from pipeline import llm
+
+    calls = []
+    def judge(*args, **kwargs):
+        calls.append("E")
+        return VerdictDraft("abstain", "abstain:LLM_OFF", reason_code="LLM_OFF")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Dossier negation safety must not ask an LLM for an override")
+
+    monkeypatch.setitem(sys.modules, "pipeline.judge", SimpleNamespace(judge=judge))
+    monkeypatch.setattr(llm, "call", forbidden)
+    item = PermittedItem(permitted_id="demo_sku:thanh_phan:1", axis_group="thanh_phan",
+                         text="không chứa đường", confidence="high", source_field="test")
+    verdict = route(atom("chứa đường", axis="thanh_phan"), context(P=[item]))
+    assert calls == ["E"]
+    assert (verdict.verdict, verdict.decided_by, verdict.reason_code) == (
+        "abstain", "abstain:LLM_OFF", "LLM_OFF")
+    assert verdict.permitted_id is None and verdict.legal_basis == []
+    assert verdict.action == "Send to review queue"
 
 
 @pytest.mark.parametrize("shape", ["dataclass", "mapping", "model"])

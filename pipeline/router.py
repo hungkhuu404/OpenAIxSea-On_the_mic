@@ -68,7 +68,9 @@ def _allow_item(key, items):
     if not key or any(_contains(key, match_key(word)[0]) for word in _INTENSIFIERS):
         return None
     for item in items:
-        if _contains(match_key(item.text)[0], key):
+        item_key = match_key(item.text)[0]
+        # A substring must not discard the dossier item's negation or its scope.
+        if _contains(item_key, key) and (key == item_key or not _has_negation(item_key)):
             return item.permitted_id
     equivalents = REPO_ROOT / "rules" / "equivalents.json"
     if equivalents.is_file():
@@ -238,6 +240,6 @@ def _route_atom(atom, ctx, pack, purpose, emit=None, *, session_id,
     draft.llm_call_ids = list(dict.fromkeys([*draft.llm_call_ids, *call_ids]))
     started = monotonic()
     guardrail = import_module("pipeline.guardrail")
-    verdict = guardrail.finalize(asdict(draft), ctx, rule_pack_version)
+    verdict = guardrail.finalize(asdict(draft), ctx, rule_pack_version, pack=pack)
     event("F", str(verdict.verdict), started)
     return RouteResult(verdict, negq_miss, e_miss)

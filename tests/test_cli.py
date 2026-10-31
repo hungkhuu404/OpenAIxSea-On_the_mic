@@ -257,6 +257,66 @@ def test_shadow_s1_only_observes_only_s1_results(boundary, monkeypatch, capsys):
     assert "calls_made=2 cache_hits=0 offline_misses=0 errors=0" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("s1_only", [False, True])
+def test_shadow_with_cached_s1_and_missing_judge_reports_incomplete(monkeypatch, tmp_path, capsys,
+                                                                 s1_only):
+    from pipeline import context, extract, router
+    from rules.registry import load_pack
+
+    monkeypatch.setattr(settings, "OFFLINE", 1)
+    monkeypatch.setattr(settings, "LLM_BACKEND", "codex")
+    monkeypatch.setattr(paths, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(paths, "LOCAL_DIR", tmp_path / "local")
+    monkeypatch.setattr(cli, "config_line", lambda: "cfg=synthetic")
+    value = session("case-shadow-incomplete")
+    value.turns = value.turns[:1]
+    ctx = context.Context(sku_id="demo_sku", category_norm="thuc_pham_bo_sung",
+                          as_of=value.as_of, dossier_state="PRESENT", dossier_hash="synthetic",
+                          P=[dict(permitted_id="demo_sku:cong_dung:1", axis_group="cong_dung",
+                                  text="permitted claim", confidence="high", source_field="test")])
+    monkeypatch.setattr(context, "build_context", lambda *args: ctx)
+    monkeypatch.setattr(cli, "_shadow_targets", lambda args: [value])
+    monkeypatch.setattr(cli, "_v1_pack", lambda: load_pack([], mode="measure"))
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Offline shadow must not call a backend or access the ledger")
+
+    monkeypatch.setattr(llm, "_backend", forbidden)
+    monkeypatch.setitem(sys.modules, "ledger", SimpleNamespace(
+        current_pack=forbidden, init_db=forbidden, record_llm_call=forbidden))
+    request = extract._request(value, value.turns[0], None, "shadow", True)
+    missed = llm.call(**request)
+    assert missed.error.kind == "off"
+    cached = missed.model_copy(update={"error": None, "response": dict(atoms=[dict(
+        span=value.turns[0].text, axis="cong_dung", speaker_role="khong_ro", role_span=None,
+        subject_is_product=True)])})
+    location = llm.cache_path(paths.CACHE_DIR, cached.request_sha256)
+    location.parent.mkdir(parents=True)
+    location.write_text(json.dumps(llm._record(cached), ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setitem(sys.modules, "pipeline.judge", None)
+    original = router.import_module
+    judge_attempts = []
+    def load(name):
+        if name == "pipeline.judge":
+            judge_attempts.append(name)
+        return original(name)
+    monkeypatch.setattr(router, "import_module", load)
+
+    args = ["shadow", "--golden"] + (["--s1-only"] if s1_only else [])
+    with llm.observe_results() as results:
+        assert cli.main(args) == (0 if s1_only else 1)
+    captured = capsys.readouterr()
+    assert "targets=1 calls_made=0 cache_hits=1 offline_misses=0 errors=0" in captured.out
+    assert [(row.kind, row.cache_hit, row.error) for row in results] == [("s1", True, None)]
+    if s1_only:
+        assert judge_attempts == [] and captured.err == ""
+    else:
+        assert judge_attempts == ["pipeline.judge"]
+        assert "incomplete_targets=1" in captured.err and "full shadow" in captured.err
+    assert not paths.ledger_db().exists()
+
+
 def test_shadow_reports_real_errors_and_nonzero_exit(boundary, monkeypatch, capsys):
     monkeypatch.setattr(llm, "_backend", lambda *args: llm._Transport(
         error=llm._error("timeout", "synthetic timeout")))

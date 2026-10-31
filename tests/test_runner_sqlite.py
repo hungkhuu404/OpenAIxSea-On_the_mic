@@ -1,8 +1,10 @@
 """T5 integration through the real ledger, context, router, H2 and aggregation."""
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 import sqlite3
 import sys
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -37,7 +39,8 @@ def integrated(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "LLM_BACKEND", "codex")
     monkeypatch.setattr(settings, "OFFLINE", 0)
     ledger.init_db(tmp_path / "ledger.db")
-    state = SimpleNamespace(spans=None, extracts=0, colour="green", calls=[], cache_reads=[])
+    state = SimpleNamespace(spans=None, extracts=0, colour="green", calls=[], cache_reads=[],
+                            barrier=None)
 
     def backend(*args):
         assert ledger._connection.get() is None, "LLM ran in the persistence transaction"
@@ -63,8 +66,11 @@ def integrated(monkeypatch, tmp_path):
                 for i, text in enumerate(spans, 1)]
 
     def judge(value, items, ctx, purpose, cache_read=True):
+        assert ledger._connection.get() is None
         votes = llm.map_calls([request(kind, value.span, purpose, cache_read)
                               for kind in ("t1", "t2")], parallel=2)
+        if state.barrier is not None:
+            state.barrier.wait(timeout=10)
         ids = [vote.request_sha256 for vote in votes]
         if any(vote.error for vote in votes):
             return VerdictDraft("abstain", "abstain:LLM_OFF", reason_code="LLM_OFF",
@@ -107,6 +113,72 @@ def test_process_reprocess_real_sqlite_preserves_history_and_search(integrated):
 def test_process_reports_missing_session(integrated):
     with pytest.raises(ValueError, match="Session not found"):
         runner.process_session("missing", "live")
+
+
+@pytest.mark.parametrize("reprocess", [False, True])
+def test_concurrent_processing_serializes_persistence_and_history(integrated, reprocess):
+    ledger.add_session(session())
+    if reprocess:
+        runner.process_session("sqlite-fixture", "live")
+    before_events = len(ledger.events_since(0))
+    integrated.barrier = threading.Barrier(2)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(runner.process_session, "sqlite-fixture", "live", reprocess)
+                   for _ in range(2)]
+        results = [future.result(timeout=20) for future in futures]
+
+    stored = ledger.get_session("sqlite-fixture")
+    assert count("atoms") == 1 and count("search_fts") == 2
+    assert [atom.span for atom in stored.atoms] == ["alpha beta gamma"]
+    with sqlite3.connect(paths.ledger_db()) as conn:
+        history = conn.execute("SELECT verdict_id,supersedes FROM verdicts ORDER BY verdict_id").fetchall()
+    assert history == ([(1, None), (2, 1), (3, 2)] if reprocess else [(1, None)])
+    assert stored.verdicts[0].verdict_id == history[-1][0]
+    assert count("verdicts") == len(history)
+    events = ledger.events_since(0)[before_events:]
+    assert sum(row.type == "verdict" for row in events) == (2 if reprocess else 1)
+    if reprocess:
+        by_id = {result.verdicts[0].verdict_id: result.verdicts[0].supersedes for result in results}
+        assert by_id == {2: 1, 3: 2}
+    else:
+        for result in results:
+            assert result.atoms == stored.atoms and result.verdicts == stored.verdicts
+            assert result.flags == stored.flags
+            assert (result.case_verdict, result.case_decided_by) == ("green", "llm_votes")
+
+
+def test_reprocess_restored_atom_links_to_latest_historical_verdict(integrated):
+    ledger.add_session(session())
+    integrated.spans = ["alpha", "beta"]
+    first = runner.process_session("sqlite-fixture", "live")
+    integrated.spans = ["gamma"]
+    runner.process_session("sqlite-fixture", "live", reprocess=True)
+    integrated.spans = ["alpha", "beta"]
+    restored = runner.process_session("sqlite-fixture", "live", reprocess=True)
+    assert restored.verdicts[1].supersedes == first.verdicts[1].verdict_id
+    assert restored.verdicts == ledger.get_session("sqlite-fixture").verdicts
+
+
+@pytest.mark.parametrize("reprocess", [False, True])
+def test_pack_change_during_compute_rejects_stale_persistence(integrated, monkeypatch, reprocess):
+    ledger.add_session(session())
+    if reprocess:
+        runner.process_session("sqlite-fixture", "live")
+    before = ledger.get_session("sqlite-fixture").model_dump()
+    events = ledger.events_since(0)
+    verdicts = count("verdicts")
+    extract = sys.modules["pipeline.extract"].extract_atoms
+    def change_pack(*args, **kwargs):
+        atoms = extract(*args, **kwargs)
+        assert ledger._connection.get() is None
+        ledger.create_pack_version([], [], "merge", approved_by="hungkhuu404")
+        return atoms
+
+    monkeypatch.setitem(sys.modules, "pipeline.extract", SimpleNamespace(extract_atoms=change_pack))
+    with pytest.raises(ValueError, match="Rule pack changed during computation"):
+        runner.process_session("sqlite-fixture", "live", reprocess=reprocess)
+    assert ledger.get_session("sqlite-fixture").model_dump() == before
+    assert ledger.events_since(0) == events and count("verdicts") == verdicts
 
 
 def test_reprocess_real_sqlite_rolls_back_atoms_verdicts_search_and_events(integrated, monkeypatch):

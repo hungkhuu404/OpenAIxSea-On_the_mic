@@ -134,14 +134,20 @@ def _shadow(args):
     started = monotonic()
     sessions = _shadow_targets(args)
     pack = _v1_pack()
+    incomplete = 0
     with observe_results() as results:
         with ThreadPoolExecutor(max_workers=settings.LLM_PARALLEL) as pool:
             futures = [pool.submit(copy_context().run, _warm, session, pack, args.s1_only)
                        for session in sessions]
             for future in futures:
-                future.result()
+                computed = future.result()
+                if computed is not None and computed.cache_missing:
+                    incomplete += 1
     counts = _print_summary(results, started, targets=len(sessions))
-    return int(bool(counts["errors"] or counts["offline_misses"]))
+    if incomplete:
+        print(f"incomplete_targets={incomplete}: full shadow could not complete every required step",
+              file=sys.stderr)
+    return int(bool(counts["errors"] or counts["offline_misses"] or incomplete))
 
 
 def _print_summary(results, started, *, targets=None):
