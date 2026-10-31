@@ -156,3 +156,15 @@ def test_repeat_validates_inputs_without_model_calls(repeat_case, capsys):
     assert invoke(1) == 2
     assert "existing ledger" in capsys.readouterr().err
     assert state.calls == [] and not db.exists()
+
+
+def test_repeat_refuses_disabled_judge_without_calls_or_writes(repeat_case, capsys):
+    state, _, _, _, db = repeat_case
+    set_override("JUDGE_MODE", "off")
+    before = db.read_bytes()
+    assert invoke(2) == 2
+    captured = capsys.readouterr()
+    assert "judge-repeat requires JUDGE_MODE=two" in captured.err
+    assert "matches_run1" not in captured.out
+    assert state.calls == [] and db.read_bytes() == before
+    assert not (paths.LOCAL_DIR / "llm_calls.jsonl").exists()

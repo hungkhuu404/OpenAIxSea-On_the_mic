@@ -3,7 +3,7 @@
 import argparse
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -27,7 +27,7 @@ from core.models import LLMCall, LLMError, Usage
 SCHEMA_DIR = Path(__file__).resolve().parent / "schemas"
 _OFFLINE = ContextVar("llm_offline", default=False)
 _MEASURING = ContextVar("llm_measuring", default=False)
-_BATCH = ContextVar("llm_batch", default=False)
+_BATCH = ContextVar("llm_batch", default=None)
 _OBSERVERS = ContextVar("llm_result_observers", default=())
 _LOCAL_WRITES = ContextVar("llm_local_writes", default=False)
 _LOG_LOCK = threading.Lock()
@@ -80,6 +80,19 @@ def run_scope(offline=False, measuring=False, *, local_writes=False):
         _LOCAL_WRITES.reset(local_token)
         _MEASURING.reset(measure_token)
         _OFFLINE.reset(off_token)
+
+
+@contextmanager
+def batch_scope(parallel=None):
+    """Share one transport budget across copied contexts and nested batches."""
+    parallel = settings.LLM_PARALLEL if parallel is None else parallel
+    if parallel < 1:
+        raise ValueError("parallel must be positive")
+    token = _BATCH.set(_BATCH.get() or threading.BoundedSemaphore(parallel))
+    try:
+        yield
+    finally:
+        _BATCH.reset(token)
 
 
 def _canonical(value):
@@ -395,7 +408,8 @@ def call(kind, purpose, model, effort, schema_name, messages, timeout_s=None, ca
     error = _off_error()
     if error:
         return _completed(Result(**base, error=error))
-    transport = _backend(model, effort, schema_name, schema, messages, kind, timeout_s)
+    with _BATCH.get() or nullcontext():
+        transport = _backend(model, effort, schema_name, schema, messages, kind, timeout_s)
     result = Result(**(base | {"latency_ms": (time.monotonic() - started) * 1000}),
                     response=transport.response, usage=transport.usage, error=transport.error)
     if result.error is None:
@@ -414,15 +428,10 @@ async def acall(*args, **kwargs):
 def map_calls(requests, parallel=None):
     """Bounded synchronous batch, with caller context copied into each worker."""
     parallel = settings.LLM_PARALLEL if parallel is None else parallel
-    if parallel < 1:
-        raise ValueError("parallel must be positive")
-    token = _BATCH.set(True)
-    try:
+    with batch_scope(parallel):
         with ThreadPoolExecutor(max_workers=parallel) as pool:
             futures = [pool.submit(copy_context().run, call, **request) for request in requests]
             return [future.result() for future in futures]
-    finally:
-        _BATCH.reset(token)
 
 
 def main(argv=None):

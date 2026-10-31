@@ -1,16 +1,18 @@
 """Step E's decision table and trust boundaries, with synthetic dossier items."""
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, is_dataclass
 from datetime import date
 import json
+import threading
 from types import SimpleNamespace
 
 import pytest
 
 from core import paths
 from core.config import set_override
-from core.models import Atom, PermittedItem
+from core.models import Atom, PermittedItem, Session, Turn
 from pipeline import judge, llm
 from pipeline.context import Context
 from pipeline.drafts import VerdictDraft
@@ -53,7 +55,7 @@ def votes(monkeypatch, case):
         state.maximum = max(state.maximum, state.active)
         if state.active == 2:
             both_started.set()
-        await both_started.wait()
+        await asyncio.wait_for(both_started.wait(), timeout=2)
         state.active -= 1
         kind = request["kind"]
         return SimpleNamespace(request_sha256=kind + "-synthetic-sha", error=state.errors.get(kind),
@@ -248,3 +250,67 @@ def test_real_schemas_accept_vote_shapes_and_reject_extra_fields(votes):
         llm._validate(response, schema)
         with pytest.raises(ValueError, match="additional property"):
             llm._validate(dict(response, unexpected=True), schema)
+
+
+@pytest.mark.parametrize("parallel", [1, 2, 3])
+def test_shadow_bounds_total_calls_across_judge_pairs(case, monkeypatch, tmp_path, parallel):
+    from pipeline import cli, context
+    from rules.registry import load_pack
+
+    atom, items, ctx = case
+    monkeypatch.setattr(paths, "CACHE_DIR", tmp_path / "committed")
+    monkeypatch.setattr(paths, "LOCAL_DIR", tmp_path / "local")
+    set_override("OFFLINE", 0)
+    set_override("LLM_PARALLEL", parallel)
+    sessions = [Session(session_id=f"shadow-synthetic-{index}", sku_pin=ctx.sku_id,
+        as_of=ctx.as_of, channel="written", source="Synthetic batch", turns=[
+            Turn(turn_id=atom.turn_id, speaker_label="[KOL 1]", attribution="constructed",
+                 text=atom.span)]) for index in range(2)]
+    monkeypatch.setattr(cli, "_shadow_targets", lambda args: sessions)
+    monkeypatch.setattr(cli, "_v1_pack", lambda: load_pack([], mode="measure"))
+    monkeypatch.setattr(cli, "config_line", lambda: "cfg=synthetic")
+    monkeypatch.setattr(context, "build_context", lambda *args: ctx)
+    lock = threading.Lock()
+    filled, overflow, release = threading.Event(), threading.Event(), threading.Event()
+    active = maximum = 0
+
+    def backend(model, effort, schema_name, schema, messages, kind, timeout_s):
+        nonlocal active, maximum
+        with lock:
+            active += 1
+            maximum = max(maximum, active)
+            if active > parallel:
+                overflow.set()
+            if kind != "s1" and active >= parallel:
+                filled.set()
+        try:
+            if kind == "s1":
+                response = dict(atoms=[dict(span=atom.span, axis=str(atom.axis),
+                    speaker_role="khong_ro", role_span=None, subject_is_product=True)])
+            else:
+                assert release.wait(timeout=5), "Batch test did not release the backend"
+                response = (dict(label="beyond_scope", permitted_id=None,
+                    closest_permitted_id=items[0]["permitted_id"], evidence_span=items[0]["text"],
+                    numbers=None) if kind == "t1" else dict(entails=[dict(
+                    permitted_id=item["permitted_id"], entails=False, evidence_span="") for item in items]))
+            llm._validate(response, schema)
+            return llm._Transport(response=response)
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(llm, "_backend", backend)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        def run():
+            with llm.observe_results() as observed:
+                return cli.main(["shadow", "--golden"]), observed
+        future = pool.submit(run)
+        try:
+            assert filled.wait(timeout=5), "Judge calls did not start"
+            assert not overflow.wait(timeout=.2), f"Observed {maximum} calls for a budget of {parallel}"
+        finally:
+            release.set()
+        code, observed = future.result(timeout=10)
+    assert code == 0 and maximum == parallel
+    assert sorted(row.kind for row in observed) == ["s1", "s1", "t1", "t1", "t2", "t2"]
+    assert not paths.ledger_db().exists()

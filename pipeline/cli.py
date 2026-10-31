@@ -128,14 +128,14 @@ def _warm(session, pack, s1_only):
 
 
 def _shadow(args):
-    from pipeline.llm import observe_results
+    from pipeline.llm import batch_scope, observe_results
 
     _check_backend()
     started = monotonic()
     sessions = _shadow_targets(args)
     pack = _v1_pack()
     incomplete = 0
-    with observe_results() as results:
+    with batch_scope(), observe_results() as results:
         with ThreadPoolExecutor(max_workers=settings.LLM_PARALLEL) as pool:
             futures = [pool.submit(copy_context().run, _warm, session, pack, args.s1_only)
                        for session in sessions]
@@ -216,6 +216,8 @@ def _judge_repeat(args):
 
     if args.n < 1:
         raise ValueError("--n must be positive")
+    if settings.JUDGE_MODE != "two":
+        raise ValueError("judge-repeat requires JUDGE_MODE=two")
     if not paths.ledger_db().is_file():
         raise ValueError("judge-repeat requires an existing ledger")
     session = ledger.get_session(args.session)
