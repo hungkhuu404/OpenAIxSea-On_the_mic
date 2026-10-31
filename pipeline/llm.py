@@ -30,6 +30,7 @@ _MEASURING = ContextVar("llm_measuring", default=False)
 _BATCH = ContextVar("llm_batch", default=None)
 _OBSERVERS = ContextVar("llm_result_observers", default=())
 _LOCAL_WRITES = ContextVar("llm_local_writes", default=False)
+_SHADOW_READ_ONLY = ContextVar("llm_shadow_read_only", default=False)
 _LOG_LOCK = threading.Lock()
 _TOKENS = {"s1": 800, "t1": 400, "t2": 600, "negq": 50}
 _MINIMAL_SCHEMA = {"type": "object", "properties": {"ok": {"type": "boolean"}},
@@ -69,9 +70,10 @@ class _Transport:
 
 
 @contextmanager
-def run_scope(offline=False, measuring=False, *, local_writes=False):
+def run_scope(offline=False, measuring=False, *, local_writes=False, shadow_read_only=False):
     """Only tighten the inherited scope, without mutating process settings."""
-    off_token = _OFFLINE.set(_OFFLINE.get() or offline)
+    shadow_token = _SHADOW_READ_ONLY.set(_SHADOW_READ_ONLY.get() or shadow_read_only)
+    off_token = _OFFLINE.set(_OFFLINE.get() or offline or _SHADOW_READ_ONLY.get())
     measure_token = _MEASURING.set(_MEASURING.get() or measuring)
     local_token = _LOCAL_WRITES.set(_LOCAL_WRITES.get() or local_writes)
     try:
@@ -80,6 +82,7 @@ def run_scope(offline=False, measuring=False, *, local_writes=False):
         _LOCAL_WRITES.reset(local_token)
         _MEASURING.reset(measure_token)
         _OFFLINE.reset(off_token)
+        _SHADOW_READ_ONLY.reset(shadow_token)
 
 
 @contextmanager
@@ -214,6 +217,8 @@ def _record(result):
 
 
 def _log(result, override):
+    if result.purpose == "shadow" and _SHADOW_READ_ONLY.get():
+        return
     row = _record(result)
     if result.purpose == "oracle":
         target = override / "llm_calls.jsonl"
@@ -358,6 +363,18 @@ def _check_shadow_backend(backend):
             raise ValueError("shadow refuses to mix backends in cache/llm")
 
 
+def _committed_cache_row(request_sha256):
+    """Read HEAD, so staged/untracked rows and working-tree edits cannot enter a stand-in."""
+    try:
+        relative = cache_path(paths.CACHE_DIR, request_sha256).relative_to(paths.REPO_ROOT).as_posix()
+        result = subprocess.run(["git", "show", f"HEAD:{relative}"], cwd=paths.REPO_ROOT,
+                                capture_output=True, text=True, encoding="utf-8",
+                                timeout=10, check=False, shell=False)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
 def call(kind, purpose, model, effort, schema_name, messages, timeout_s=None, cache_read=True):
     """Make or replay one request. Never block an event-loop thread."""
     try:
@@ -371,7 +388,8 @@ def call(kind, purpose, model, effort, schema_name, messages, timeout_s=None, ca
         raise ValueError("invalid LLM kind or purpose")
     schema = _schema(schema_name)
     backend = settings.LLM_BACKEND
-    override = paths.resolve_path(settings.LLM_CACHE_DIR) if settings.LLM_CACHE_DIR else None
+    readonly = purpose == "shadow" and _SHADOW_READ_ONLY.get()
+    override = paths.resolve_path(settings.LLM_CACHE_DIR) if settings.LLM_CACHE_DIR and not readonly else None
     if purpose == "oracle":
         if override is None or override.is_relative_to(paths.REPO_ROOT.resolve()):
             raise ValueError("oracle requires LLM_CACHE_DIR outside the repository")
@@ -383,17 +401,24 @@ def call(kind, purpose, model, effort, schema_name, messages, timeout_s=None, ca
     started = time.monotonic()
     base = dict(request_sha256=sha, kind=kind, purpose=purpose, backend=backend, model=model,
                 effort=effort, ts=datetime.now(timezone.utc).isoformat(), latency_ms=0)
-    local = paths.local_cache_dir()
+    local = None if readonly else paths.local_cache_dir()
     # Oracle lookup is confined to its external directory, not repository caches.
-    directories = [override] if purpose == "oracle" else [override, paths.CACHE_DIR, local]
+    directories = ([paths.CACHE_DIR] if readonly else
+                   [override] if purpose == "oracle" else [override, paths.CACHE_DIR, local])
     if cache_read:
         for directory in directories:
             if directory is None:
                 continue
-            location = cache_path(directory, sha)
-            if not location.is_file():
-                continue
-            cached = LLMCall.model_validate_json(location.read_text(encoding="utf-8"))
+            if readonly:
+                content = _committed_cache_row(sha)
+                if content is None:
+                    continue
+            else:
+                location = cache_path(directory, sha)
+                if not location.is_file():
+                    continue
+                content = location.read_text(encoding="utf-8")
+            cached = LLMCall.model_validate_json(content)
             if cached.error is not None or cached.request_sha256 != sha:
                 continue
             result = Result(**(cached.model_dump() | base), cache_hit=True)

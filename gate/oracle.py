@@ -190,7 +190,7 @@ def main(argv=None):
 
         cases = [case | {"as_of": case_as_of(case), "source_date": case_as_of(case)} for case in cases]
         print(config_line(), file=sys.stderr)
-        with run_scope(offline=True, measuring=True):
+        with run_scope(offline=True, measuring=True, shadow_read_only=args.standin_every is not None):
             old = list(runner.replay(cases, pack=before, persist=False, purpose=purpose, pack_version=1))
             new = list(runner.replay(cases, pack=after, persist=False, purpose=purpose, pack_version=2))
         report = summarize(cases, old, new, before, after, args.standin_every is not None)

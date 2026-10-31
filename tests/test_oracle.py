@@ -352,27 +352,31 @@ def test_real_cache_replay_is_external_private_and_network_free(inputs, transpor
     assert repository_snapshot() == before and not paths.ledger_db().exists()
 
 
-@pytest.mark.xfail(strict=True, reason="blocked: shadow replay writes .local; pipeline owner read-only scope is pending")
 def test_real_standin_cache_hits_leave_local_and_ledger_unchanged(inputs, transport_setup, monkeypatch, tmp_path):
-    setup = transport_setup
-    public_cache = tmp_path / "committed synthetic cache"
-    shutil.copytree(inputs.cache, public_cache)
-    monkeypatch.setattr(paths, "CACHE_DIR", public_cache)
+    root = tmp_path / "public synthetic repo with spaces"
+    cache = root / "cache/llm"
+    for row in inputs.cache.glob("*/*.json"):
+        target = cache / row.relative_to(inputs.cache)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(row, target)
+    def git(*args):
+        return subprocess.run(["git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
+                               "-c", "commit.gpgsign=false", *args], cwd=root, check=True,
+                              capture_output=True, text=True, encoding="utf-8", timeout=10)
+    git("init")
+    git("add", "cache/llm")
+    git("commit", "-m", "Synthetic public cache")
+    monkeypatch.setattr(paths, "REPO_ROOT", root)
+    monkeypatch.setattr(paths, "CACHE_DIR", cache)
+    monkeypatch.setattr(paths, "LOCAL_DIR", root / ".local")
     monkeypatch.setattr(paths, "GOLDEN_CASES", inputs.source)
+    set_override("LEDGER_DB", str(root / ".local/absent.db"))
+    monkeypatch.setattr(paths, "local_cache_dir", lambda **kwargs: pytest.fail("stand-in resolved local cache"))
     before = repository_snapshot()
-    try:
-        assert oracle.main(["replay", "--standin-every", "1", "--v2-rules", "R04x", "--out", str(inputs.out)]) == 0
-        assert repository_snapshot() == before and not paths.ledger_db().exists()
-    finally:
-        # Keep this dependency regression itself from leaving a log in the checkout.
-        prior = before[2].get(Path("llm_calls.jsonl"))
-        log = paths.LOCAL_DIR / "llm_calls.jsonl"
-        if prior is None:
-            log.unlink(missing_ok=True)
-        else:
-            log.write_bytes(prior)
-        if not before[1] and paths.LOCAL_DIR.exists():
-            paths.LOCAL_DIR.rmdir()
+    assert oracle.main(["replay", "--standin-every", "1", "--v2-rules", "R04x", "--out", str(inputs.out)]) == 0
+    report = json.loads(inputs.out.read_text(encoding="utf-8"))
+    assert report["standin"] is True and report["cache_miss"] == report["negq_miss"] == 0
+    assert repository_snapshot() == before and not paths.ledger_db().exists()
 
 
 def test_refuses_multiple_candidates_and_input_overwrite(inputs):
