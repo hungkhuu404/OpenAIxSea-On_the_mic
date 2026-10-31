@@ -4,6 +4,7 @@
   --green: #5CC199; --yellow: #F5DB5C; --red: #F56447; --abstain: #E1E5EA;
   --interface: 'Be Vietnam Pro', sans-serif; --speech: 'Newsreader', serif;
   --mono: 'JetBrains Mono', monospace; --text-size: 16px;
+  --clip-bg: #0009; --clip-vi: #fff; --clip-en: #ddd;
 }
 [data-palette="graphite"] {
   --bg: #0D0F13; --s1: #14171D; --s2: #1B1F27; --line: #2A2F39;

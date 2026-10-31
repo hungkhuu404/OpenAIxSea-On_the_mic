@@ -1,4 +1,4 @@
-"""HTTP reads and event streaming; later tasks replace entries in STUB_ROUTES."""
+"""HTTP reads, session commands, event streaming and presentation policy."""
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -173,12 +173,5 @@ def create_app(public=False):
             hit["display_speaker"] = turn["display_speaker"]
         return hits
 
-    def stub(task):
-        def endpoint():
-            return JSONResponse({"todo": task}, status_code=501)
-        return endpoint
-
-    for (method, path), task in STUB_ROUTES.items():
-        app.add_api_route("/api" + path, stub(task), methods=[method])
     app.mount("/", StaticFiles(directory=REPO_ROOT / "ui", html=True), name="ui")
     return app
