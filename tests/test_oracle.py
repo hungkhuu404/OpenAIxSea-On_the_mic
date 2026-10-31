@@ -165,11 +165,17 @@ def test_metadata_packs_load_external_unapproved_candidate_with_spaces(tmp_path,
     for suffix in (".py", ".meta.json"):
         shutil.copyfile(paths.REPO_ROOT / f"tests/gate_fixtures/behaviour/R04x{suffix}",
                         candidate_rules / f"R04x{suffix}")
+    for reference in ("L1_PREDECL", "R04"):
+        (candidate_rules / f"{reference}.py").write_text(
+            f'RULE_ID = {reference!r}\nraise AssertionError("unselected reference was executed")\n',
+            encoding="utf-8")
     before, after = oracle.build_packs("R04x", candidate)
     assert before.mode == "live" and after.mode == "measure"
     selected = next(item for item in after.active if item.rule_id == "R04x")
     assert selected.meta.approved_by is None
     assert selected.module.check(SimpleNamespace(text="demo trigger"))
+    law_rule = next(item for item in after.active if item.rule_id == "R04")
+    assert Path(law_rule.module.__file__).resolve().is_relative_to(paths.REPO_ROOT)
 
 
 def test_transitions_misses_refusals_and_mcnemar(monkeypatch):
@@ -342,6 +348,7 @@ def test_real_cache_replay_is_external_private_and_network_free(inputs, transpor
         for marker in (case["case_id"], case["text"], case["text"].split()[0]):
             assert marker not in output + report_text
     assert list(inputs.cache.glob("*/*.json")) and (inputs.cache / "llm_calls.jsonl").is_file()
+    assert not list(paths.local_cache_dir().rglob("*"))
     assert repository_snapshot() == before and not paths.ledger_db().exists()
 
 
