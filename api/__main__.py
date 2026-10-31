@@ -15,6 +15,7 @@ def main():
     args = parser.parse_args()
     if args.public:
         set_override("PUBLIC_MODE", 1)
+        set_override("OFFLINE", 1)
     uvicorn.run(create_app(), host="127.0.0.1", port=args.port)
 
 

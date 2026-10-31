@@ -2,6 +2,7 @@ import { el } from './dom.js';
 import { request, setPresenter, loadSession, events } from './data.js';
 import { sessionView } from './session.js';
 import { presenterView } from './presenter.js';
+import { sentenceBox } from './preflight.js';
 
 const app = document.querySelector('#app');
 const html = document.documentElement;
@@ -31,7 +32,11 @@ document.querySelector('#stage').onclick = stage;
 setInterval(corner, 10000);
 
 async function showSession(root, id, translations = {}) {
-  const session = await loadSession(id);
+  const session = await loadSession(id, Boolean(health.public));
+  if (!session) {
+    root.append(el('p', 'Replay not ready. Prepared sessions will appear when the replay modules are available.', 'notice'));
+    return;
+  }
   let view = sessionView(session, translations, session.events || []);
   root.append(view.node);
   const latest = session.verdicts?.map(row => row.ts).sort().at(-1);
@@ -43,7 +48,7 @@ async function showSession(root, id, translations = {}) {
       if (!['verdict', 'turn.verdict', 'session.flag', 'backfill.done'].includes(event.type) || refreshing) return;
       refreshing = true;
       try {
-        const updated = await loadSession(session.session_id);
+        const updated = await loadSession(session.session_id, Boolean(health.public));
         if (!root.isConnected) return;
         const next = sessionView(updated, translations);
         view.node.replaceWith(next.node); view = next;
@@ -84,10 +89,14 @@ async function scene(root, number, backup, manifest) {
 async function route() {
   const current = ++generation;
   stopEvents(); stopEvents = () => {}; presenter = null;
-  const isPresenter = location.hash.startsWith('#/present');
-  setPresenter(isPresenter); app.replaceChildren();
+  app.replaceChildren();
   try {
     health = await request('/api/health');
+    const publicMode = Boolean(health.public);
+    const isPresenter = !publicMode && location.hash.startsWith('#/present');
+    setPresenter(isPresenter);
+    document.querySelector('#present-link').hidden = publicMode;
+    document.querySelector('#public-banner').hidden = !publicMode;
     html.dataset.palette = storage.get('palette') || health.palette || 'oil';
     html.dataset.stage = storage.get('stage') || String(Boolean(health.stage));
     await corner();
@@ -98,8 +107,25 @@ async function route() {
     } else {
       app.append(el('h1', 'Session ledger'));
       const id = new URLSearchParams(location.hash.split('?')[1]).get('session');
+      app.append(sentenceBox());
+      if (publicMode) {
+        const sessions = await request('/api/sessions');
+        if (sessions.length) {
+          const label = el('label', 'Reenacted session');
+          const select = el('select');
+          for (const row of sessions) {
+            const option = el('option', `${row.as_of} · ${row.session_id}`);
+            option.value = row.session_id; select.append(option);
+          }
+          select.value = id || sessions[0].session_id;
+          select.onchange = () => { location.hash = `#/?session=${encodeURIComponent(select.value)}`; };
+          label.append(select); app.append(label);
+        }
+      }
       let translations = {};
-      try { translations = (await request('/api/present/manifest')).translations; } catch { /* Optional local translations. */ }
+      if (!publicMode) {
+        try { translations = (await request('/api/present/manifest')).translations; } catch { /* Optional local translations. */ }
+      }
       await showSession(app, id, translations);
     }
   } catch { app.append(el('p', 'Session unavailable. Please check the local service.', 'notice')); }

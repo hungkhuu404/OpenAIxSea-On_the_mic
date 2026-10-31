@@ -15,12 +15,13 @@ from core.paths import REPO_ROOT
 import ledger
 from api.present import router as present_router
 from api.ui import router as ui_router
+from api.preflight import PublicRateLimit, router as preflight_router
+from api.public import ledger_lifespan
 
 
 STUB_ROUTES = {
     ("POST", "/sessions"): "P4",
     ("POST", "/sessions/{id}/process"): "P4",
-    ("POST", "/preflight"): "P3",
     ("GET", "/queue"): "P5",
     ("POST", "/labels"): "P5",
     ("POST", "/report-wrong"): "P5",
@@ -83,23 +84,36 @@ async def event_stream(request, since):
 
 
 def create_app(public=False):
+    public = bool(public or config.settings.PUBLIC_MODE)
     if public:
         config.set_override("PUBLIC_MODE", 1)
+        config.set_override("OFFLINE", 1)
 
     @asynccontextmanager
     async def lifespan(app):
-        ledger.init_db(config.settings.LEDGER_DB)
-        # config_line calls config_fields internally. Capture that same dictionary
-        # once so health does not spawn git or Codex for each request.
-        fields = config.config_fields()
-        app.state.config_fields = fields
-        print(" ".join(f"{key}={value}" for key, value in fields.items()), flush=True)
-        yield
+        async with ledger_lifespan(public):
+            fields = config.config_fields()
+            app.state.config_fields = fields
+            print(" ".join(f"{key}={value}" for key, value in fields.items()), flush=True)
+            yield
 
     app = FastAPI(lifespan=lifespan)
-    app.state.public = bool(config.settings.PUBLIC_MODE)
+    app.state.public = public
+    app.state.preflight_limit = PublicRateLimit()
+    app.include_router(preflight_router)
     app.include_router(present_router)
     app.include_router(ui_router)
+
+    @app.middleware("http")
+    async def read_only_public(request, call_next):
+        if public:
+            path = request.url.path
+            if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not (
+                    request.method == "POST" and path == "/api/preflight"):
+                return JSONResponse(status_code=403, content={"detail": "Public demo is read-only"})
+            if path == "/api/present/manifest" or path == "/present" or path.startswith("/present/"):
+                return JSONResponse(status_code=404, content={"detail": "Not found"})
+        return await call_next(request)
 
     @app.exception_handler(ModuleNotFoundError)
     async def not_ready(request, exc):
