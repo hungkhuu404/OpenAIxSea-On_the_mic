@@ -151,7 +151,10 @@ def test_llm_votes_cannot_produce_red(monkeypatch, target, mode, t1, found, negq
 
     monkeypatch.setattr(llm, "call", call)
     if target == "pipeline.judge":
-        result = module.judge(atom, [item], ctx, purpose="shadow", cache_read=True)
+        from pipeline.router import axis_groups
+
+        result = module.judge(atom, ctx.prompt_view(axis_groups(atom.axis)), ctx,
+                              purpose="shadow", cache_read=True)
     else:
         from pipeline.drafts import VerdictDraft
 

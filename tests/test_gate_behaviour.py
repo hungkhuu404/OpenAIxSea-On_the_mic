@@ -367,21 +367,24 @@ def test_real_runner_and_router_without_live_ledger(monkeypatch, tmp_path):
     assert not paths.ledger_db().exists()
 
 
-def test_real_runner_and_router_measure_code_red_with_existing_family_id(monkeypatch, tmp_path):
-    candidate = real_runner_fixture(monkeypatch, tmp_path, rule_id="R04", firing=True)
-    result = b.run_behaviour("R04", candidate, ci=True)
+def test_real_runner_and_router_measure_code_red_with_new_candidate_id(monkeypatch, tmp_path):
+    from rules.registry import all_rules
+
+    assert "R04x" not in {rule.rule_id for rule in all_rules()}
+    candidate = real_runner_fixture(monkeypatch, tmp_path, firing=True)
+    result = b.run_behaviour("R04x", candidate, ci=True)
     assert result.passed
     assert result.observed_changes == [dict(item_id="synthetic", before="abstain", after="red")]
     assert not paths.ledger_db().exists()
 
 
 def test_real_candidate_hits_outside_labelled_family(monkeypatch, tmp_path):
-    candidate = real_runner_fixture(monkeypatch, tmp_path, rule_id="R04", firing=True)
+    candidate = real_runner_fixture(monkeypatch, tmp_path, firing=True)
     case = json.loads(paths.GOLDEN_CASES.read_text(encoding="utf-8"))
     case.update(label="yellow", rule_ids=["R05"])
     paths.GOLDEN_CASES.write_text(json.dumps(case) + "\n", encoding="utf-8")
-    result = b.run_behaviour("R04", candidate, ci=True)
-    assert any(line.startswith("R04 check 10:") and "synthetic" in line
+    result = b.run_behaviour("R04x", candidate, ci=True)
+    assert any(line.startswith("R04x check 10:") and "synthetic" in line
                for line in result.error_lines)
     assert not paths.ledger_db().exists()
 
