@@ -29,6 +29,7 @@ def world(tmp_path, monkeypatch):
     config.set_override('PRESENT_DIR', str(tmp_path / 'assets'))
     config.set_override('LLM_BACKEND', 'codex')
     config.set_override('OFFLINE', 1)
+    config.set_override('LOOP_DRY', 1)
     monkeypatch.setitem(sys.modules, 'rules.registry', SimpleNamespace(all_rules=lambda: []))
     def fields():
         return dict(backend='codex', offline=config.settings.OFFLINE, judge=config.settings.JUDGE_MODE,
@@ -90,7 +91,7 @@ def test_restore_guards_and_config(world, monkeypatch, capsys):
         with pytest.raises(ValueError, match='Configuration mismatch'):
             demo.restore('saved', free_port())
         config.set_override(field, old)
-    config.set_override('LOOP_DRY', 1)
+    config.set_override('LOOP_DRY', 0)
     demo.restore('saved', free_port())
     safety.git('checkout', '--orphan', 'unrelated')
     safety.git('commit', '--allow-empty', '-m', 'Unrelated fixture')
