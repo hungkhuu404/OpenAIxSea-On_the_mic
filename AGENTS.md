@@ -55,7 +55,7 @@ Read `docs/contracts.md` before writing code. It is the single source of names, 
 14. Cards and UI never show fine amounts. Use `pipeline.guardrail.display_text`.
 15. Similarity never decides a colour. `near_hits` are used only to rank the review queue, to suggest rules to humans and to cluster items for T5.
 16. Every highlighted span (`span`, `evidence_span`, `law_span`) is a substring of its source, checked by code.
-17. Real people: the repo, the data and the public link use role labels (`[KOL 1]`, `[KOL 2]`, `[KOL 3]`). Real names, video clips, subtitles, translations and slides exist only in the local `PRESENT_DIR` and are never committed. A real name may be shown only on a turn whose `attribution` is `press_attributed`; quotes the press does not attribute show "Speaker unknown"; team-written reenactment lines never carry a real name.
+17. Real people: the repo, the data and the public link use role labels (`[KOL 1]`, `[KOL 2]`, `[KOL 3]`). Real names, video clips, subtitles, translations and slides exist only in the local `PRESENT_DIR` and are never committed. A real name may be shown only on a turn whose `attribution` is `press_attributed`; quotes the press does not attribute show "Speaker unknown"; team-written reenactment lines never carry a real name. Exception for event day, 31 October 2026, authorized by the rule keeper (`hungkhuu404`): the stage app on the presenting laptop, run with `PRESENT_DIR` set and `OFFLINE=1`, may be exposed through a temporary public tunnel link for judges, showing clips, slides and real names. These assets are still never committed; close the tunnel after judging.
 18. Public mode (`PUBLIC_MODE=1`) never calls an LLM or Codex.
 
 ## Law basis table (`rules/law_basis.json`)
