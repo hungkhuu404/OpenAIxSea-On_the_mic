@@ -55,7 +55,7 @@ def _path(value, root, rule_id, files, *, write=False, visited=None):
     if not isinstance(value, str):
         raise ValueError("missing literal path")
     value = value.replace("\\", "/")
-    if not value or any(char in value for char in "~$*?[]{}\n\r") or ".." in value.split("/"):
+    if not value or any(char in value for char in "~$%!*?[]{}\n\r") or ".." in value.split("/"):
         raise ValueError("non-literal or traversing path")
     base = str(root).replace("\\", "/").rstrip("/")
     absolute = value.startswith("/") or re.match(r"^[A-Za-z]:/", value)

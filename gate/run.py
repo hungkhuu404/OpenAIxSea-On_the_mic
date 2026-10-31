@@ -43,7 +43,7 @@ def _purity(tree):
 
 def _scope(candidate, rule_id, ci, base):
     if ci:
-        command = ["git", "diff", "--name-only", "-z", f"{base}...HEAD"]
+        command = ["git", "diff", "--no-renames", "--name-only", "-z", f"{base}...HEAD"]
     else:
         command = ["git", "status", "--porcelain", "-uall", "-z"]
     result = subprocess.run(command, cwd=candidate, capture_output=True, check=True)

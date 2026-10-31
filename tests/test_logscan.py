@@ -84,6 +84,10 @@ def test_allowed_commands(tmp_path, candidate, command):
     'rg --pre evil sample core/sample.py', 'git diff --output=core/sample.py',
     'pytest -q tests/test_R04x.py -p evil', 'cat core/*.py',
     'cmd /c cat core/sample.py; python -c pass',
+    r'cmd /c type loop_input\%INPUT_FILE%',
+    r'cmd /c type loop_input\!INPUT_FILE!',
+    r'cmd /c type "loop_input\%INPUT_FILE%"',
+    r'cmd /c type "loop_input\!INPUT_FILE!"',
     "/bin/zsh -lc '/bin/sh -c pwd'",
     '$HOME/bin/python -m pytest -q tests/test_R04x.py',
 ])

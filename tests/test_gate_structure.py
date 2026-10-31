@@ -165,6 +165,22 @@ def test_ci_scope(candidate, behaviour):
     assert not checks(run.run_gate("R04x", candidate, ci=True, base=base))[3].passed
 
 
+def test_ci_scope_detects_renamed_source(candidate, behaviour):
+    destination = candidate / "tests/test_R04x.py"
+    source = candidate / "tests/test_security.py"
+    source.write_bytes(destination.read_bytes())
+    git(candidate, "add", "tests/test_security.py")
+    git(candidate, "commit", "-qm", "Fixture security test")
+    base = git(candidate, "rev-parse", "HEAD").stdout.decode().strip()
+    destination.unlink()
+    git(candidate, "mv", "tests/test_security.py", "tests/test_R04x.py")
+    git(candidate, "add", ".")
+    git(candidate, "commit", "-qm", "Fixture rename")
+    result = run.run_gate("R04x", candidate, ci=True, base=base)
+    assert not checks(result)[3].passed
+    assert "tests/test_security.py" in checks(result)[3].detail
+
+
 def test_overlap_without_precedence(candidate, behaviour, monkeypatch, tmp_path):
     meta_path = candidate / "rules/R04x.meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
