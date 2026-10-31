@@ -358,12 +358,15 @@ def test_backfill_drops_old_only_flags_and_preserves_history(boundary, monkeypat
     assert fake.history[-1].supersedes == first.verdicts[0].verdict_id
     assert fake.history[-1].flags == [] and fake.history[-1].verdict == "green"
     assert fake.history[0] == original
+    before = deepcopy((fake.atoms, fake.history, fake.flags, fake.index, fake.events))
     unchanged = runner.replay(["fixture"], persist=True)
     assert (unchanged.changed_cases, unchanged.changed_atoms) == (0, 0)
-    assert len(fake.history) == 2 and fake.transactions == 2
+    assert (fake.atoms, fake.history, fake.flags, fake.index, fake.events) == before
+    # Even a no-change replay takes the writer lock to validate its snapshot.
+    assert len(fake.history) == 2 and fake.transactions == 3
     state.colour = "yellow"
     changed = runner.replay(["fixture"], persist=True)
-    assert changed[0].status == "ok" and len(fake.history) == 3 and fake.transactions == 3
+    assert changed[0].status == "ok" and len(fake.history) == 3 and fake.transactions == 4
     assert (changed.changed_cases, changed.changed_atoms) == (1, 1)
     assert fake.history[-1].supersedes == fake.history[-2].verdict_id
     assert fake.history[-1].flags == [] and fake.history[0] == original

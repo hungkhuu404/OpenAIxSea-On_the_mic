@@ -1,6 +1,7 @@
 """T5 integration through the real ledger, context, router, H2 and aggregation."""
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import date
 import sqlite3
 import sys
@@ -29,6 +30,14 @@ def session(session_id="sqlite-fixture", text="alpha beta gamma"):
 def count(table):
     with sqlite3.connect(paths.ledger_db()) as conn:
         return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+
+
+def replay_state():
+    # Cache hits may append llm_calls; compare the persisted session state exactly.
+    with sqlite3.connect(paths.ledger_db()) as conn:
+        return {table: conn.execute(f"SELECT rowid,* FROM {table} ORDER BY rowid").fetchall()
+                for table in ("sessions", "turns", "atoms", "verdicts", "session_flags",
+                              "search_fts", "events", "rule_packs")}
 
 
 @pytest.fixture
@@ -320,6 +329,270 @@ def test_backfill_uses_only_current_quarantine_flags_and_keeps_history(integrate
     assert (repeated.changed_cases, repeated.changed_atoms) == (0, 0)
     assert ledger.get_session("sqlite-fixture").verdicts == [flagged] and count("verdicts") == 3
     assert integrated.calls == calls
+
+
+@pytest.mark.parametrize("interleaving", ["after_compute", "before_writer"])
+def test_backfill_rejects_stale_pack_after_newer_quarantine_replay(
+        integrated, monkeypatch, interleaving):
+    empty = ledger.create_pack_version([], [], "merge", approved_by="hungkhuu404")
+    ledger.add_session(session(text="chữa bệnh"))
+    first = runner.process_session("sqlite-fixture", "shadow").verdicts[0]
+    assert first.verdict == "green" and first.rule_pack_version == empty.version
+    assert sorted(integrated.calls) == ["s1", "t1", "t2"]
+    calls = list(integrated.calls)
+    active = ledger.create_pack_version(["R04"], [], "merge", approved_by="hungkhuu404")
+    compute, transaction = runner._compute, ledger.transaction
+    armed = interleaved = False
+    expected = newest = None
+
+    def quarantine_and_replay():
+        nonlocal interleaved, expected, newest
+        interleaved = True  # Disarm before the competing pack's writes and replay.
+        assert ledger._connection.get() is None
+        pack = ledger.create_pack_version([], ["R04"], "quarantine", rule_id="R04",
+                                          approved_by="hungkhuu404")
+        result = runner.replay(["sqlite-fixture"], persist=True)
+        assert result[0].status == "ok" and result[0].case_verdict == "abstain"
+        assert (result.changed_cases, result.changed_atoms) == (1, 1)
+        newest, = ledger.effective_verdicts("sqlite-fixture")
+        assert newest.verdict == "abstain" and newest.reason_code == "RULE_QUARANTINED"
+        assert newest.flags == [AtomFlag.PREV_RED] and newest.rule_pack_version == pack.version
+        assert newest.supersedes == first.verdict_id and count("verdicts") == 2
+        expected = replay_state()
+
+    def compute_then_interleave(*args, **kwargs):
+        nonlocal armed
+        result = compute(*args, **kwargs)
+        if not interleaved:
+            verdict, = result.verdicts
+            assert verdict.verdict == "red" and verdict.decided_by == "rule:R04"
+            assert verdict.rule_pack_version == active.version
+            armed = True
+            if interleaving == "after_compute":
+                quarantine_and_replay()
+        return result
+
+    @contextmanager
+    def interleave_before_writer():
+        if armed and not interleaved:
+            # Cache logging transactions have finished; the writer has not begun.
+            quarantine_and_replay()
+        with transaction() as conn:
+            yield conn
+
+    monkeypatch.setattr(runner, "_compute", compute_then_interleave)
+    if interleaving == "before_writer":
+        monkeypatch.setattr(ledger, "transaction", interleave_before_writer)
+    with pytest.raises(ValueError, match="Rule pack changed during replay"):
+        runner.replay(["sqlite-fixture"], persist=True)
+    assert interleaved and replay_state() == expected
+    assert ledger.get_session("sqlite-fixture").verdicts == [newest]
+    assert ledger.effective_verdicts("sqlite-fixture", active.version) == [first]
+    assert ledger.get_verdict(first.verdict_id) == first
+    assert integrated.calls == calls
+
+
+@pytest.mark.parametrize("text", ["chữa bệnh", "alpha"], ids=["changed", "unchanged"])
+def test_backfill_rejects_explicit_stale_pack_even_without_a_diff(integrated, text):
+    ledger.create_pack_version([], [], "merge", approved_by="hungkhuu404")
+    ledger.add_session(session(text=text))
+    first = runner.process_session("sqlite-fixture", "shadow").verdicts[0]
+    assert first.verdict == "green"
+    calls = list(integrated.calls)
+    active = ledger.create_pack_version(["R04"], [], "merge", approved_by="hungkhuu404")
+    stale = load_pack(active.active, quarantined=active.quarantined, mode="live")
+    ledger.create_pack_version([], ["R04"], "quarantine", rule_id="R04",
+                               approved_by="hungkhuu404")
+    current = runner.replay(["sqlite-fixture"], persist=True)
+    assert current[0].status == "ok"
+    assert current[0].case_verdict == ("abstain" if text == "chữa bệnh" else "green")
+    if text == "alpha":
+        assert (current.changed_cases, current.changed_atoms) == (0, 0)
+        assert ledger.effective_verdicts("sqlite-fixture") == [first]
+    expected = replay_state()
+    effective = ledger.effective_verdicts("sqlite-fixture")
+    with pytest.raises(ValueError, match="Rule pack changed during replay"):
+        runner.replay(["sqlite-fixture"], stale, persist=True, pack_version=active.version)
+    assert replay_state() == expected
+    assert ledger.effective_verdicts("sqlite-fixture") == effective
+    assert ledger.get_verdict(first.verdict_id) == first
+    assert integrated.calls == calls
+
+
+def test_backfill_rejects_stale_pack_without_targets(integrated):
+    version = ledger.current_pack().version
+    rules = load_pack([], mode="live")
+    ledger.create_pack_version([], [], "merge", approved_by="hungkhuu404")
+    expected = replay_state()
+    with pytest.raises(ValueError, match="Rule pack changed during replay.*again"):
+        runner.replay([], rules, persist=True, pack_version=version)
+    assert replay_state() == expected and integrated.calls == []
+
+
+def test_backfill_stale_computation_preserves_newer_r06_session_flag(integrated, monkeypatch):
+    ledger.create_pack_version([], [], "merge", approved_by="hungkhuu404")
+    ledger.add_session(session().model_copy(update={"sku_pin": "non_alco"}))
+    first = runner.process_session("sqlite-fixture", "shadow")
+    assert first.flags == [] and first.verdicts[0].reason_code == "DOSSIER_EMPTY"
+    calls = list(integrated.calls)
+    compute = runner._compute
+    interleaved = False
+    expected = None
+
+    def compute_then_enable_r06(*args, **kwargs):
+        nonlocal interleaved, expected
+        result = compute(*args, **kwargs)
+        if not interleaved:
+            interleaved = True
+            assert result.flags == [] and ledger._connection.get() is None
+            ledger.create_pack_version(["R06"], [], "merge", approved_by="hungkhuu404")
+            newer = runner.replay(["sqlite-fixture"], persist=True)
+            assert (newer.changed_cases, newer.changed_atoms) == (1, 0)
+            assert newer[0].status == "ok" and newer[0].case_verdict == "red"
+            assert [flag.rule_id for flag in ledger.get_session("sqlite-fixture").flags] == ["R06"]
+            expected = replay_state()
+        return result
+
+    monkeypatch.setattr(runner, "_compute", compute_then_enable_r06)
+    with pytest.raises(ValueError, match="Rule pack changed during replay.*again"):
+        runner.replay(["sqlite-fixture"], persist=True)
+    assert interleaved and replay_state() == expected
+    assert [flag.rule_id for flag in ledger.get_session("sqlite-fixture").flags] == ["R06"]
+    assert ledger.get_session("sqlite-fixture").verdicts == first.verdicts
+    assert count("session_flags") == count("verdicts") == 1
+    assert integrated.calls == calls
+
+
+@pytest.mark.parametrize("interleaving", ["after_compute", "before_writer"])
+@pytest.mark.parametrize("target_kind", ["session", "case"])
+@pytest.mark.parametrize("mutation", ["history", "atoms", "flags"])
+def test_backfill_rejects_same_pack_session_mutation(
+        integrated, monkeypatch, interleaving, target_kind, mutation):
+    from pipeline.context import build_context
+
+    pack = ledger.create_pack_version([], [], "merge", approved_by="hungkhuu404")
+    value = session("case-concurrent")
+    ledger.add_session(value)
+    integrated.spans = ["alpha"]
+    first = runner.process_session(value.session_id, "shadow")
+    original, = first.verdicts
+    flags = build_context("non_alco", value.as_of, load_pack(["R06"], mode="live")).session_flags
+    assert [flag.rule_id for flag in flags] == ["R06"]
+    calls = list(integrated.calls)
+    integrated.colour = "yellow"
+    compute, transaction = runner._compute, ledger.transaction
+    armed = interleaved = False
+    expected = None
+    newest = original
+
+    def mutate_session():
+        nonlocal interleaved, expected, newest
+        interleaved = True
+        assert ledger._connection.get() is None
+        with transaction():
+            if mutation == "history":
+                verdict = original.model_copy(update={
+                    "flags": [AtomFlag.RECALLED_AFTER], "supersedes": original.verdict_id})
+                verdict_id, = ledger.append_verdicts([verdict])
+                newest = ledger.get_verdict(verdict_id)
+            elif mutation == "atoms":
+                atom = first.atoms[0].model_copy(update={"span": "beta", "start": 6, "end": 10})
+                ledger.replace_atoms(value.session_id, [atom])
+            else:
+                ledger.replace_session_flags(value.session_id, flags)
+        assert ledger.current_pack().version == pack.version
+        expected = replay_state()
+
+    def compute_then_interleave(*args, **kwargs):
+        nonlocal armed
+        result = compute(*args, **kwargs)
+        assert result.verdicts[0].verdict == "yellow" and result.flags == []
+        armed = True
+        if interleaving == "after_compute":
+            mutate_session()
+        return result
+
+    @contextmanager
+    def interleave_before_writer():
+        if armed and not interleaved:
+            mutate_session()
+        with transaction() as conn:
+            yield conn
+
+    monkeypatch.setattr(runner, "_compute", compute_then_interleave)
+    if interleaving == "before_writer":
+        monkeypatch.setattr(ledger, "transaction", interleave_before_writer)
+    target = value.session_id if target_kind == "session" else dict(
+        case_id="concurrent", sku_id="kera", text=value.turns[0].text)
+    with pytest.raises(ValueError, match="Session changed during replay.*again"):
+        runner.replay([target], persist=True)
+    assert interleaved and replay_state() == expected
+    assert ledger.get_session(value.session_id).verdicts == [newest]
+    assert ledger.get_verdict(original.verdict_id) == original
+    assert count("verdicts") == (2 if mutation == "history" else 1)
+    assert newest.supersedes == (original.verdict_id if mutation == "history" else None)
+    assert integrated.calls == calls
+
+
+def test_backfill_rejects_explicit_case_created_during_computation(integrated, monkeypatch):
+    ledger.create_pack_version([], [], "merge", approved_by="hungkhuu404")
+    case = dict(case_id="concurrent-new", sku_id="kera", text="alpha beta gamma")
+    rules, version = load_pack([], mode="live"), ledger.current_pack().version
+    for span in ("alpha", "beta"):
+        integrated.spans = [span]
+        runner.run_cases([case], "shadow", rules, version)
+    calls = list(integrated.calls)
+    integrated.spans, integrated.colour = ["alpha"], "yellow"
+    compute = runner._compute
+    interleaved = False
+    expected = newest = None
+
+    def compute_then_create(*args, **kwargs):
+        nonlocal interleaved, expected, newest
+        result = compute(*args, **kwargs)
+        if not interleaved:
+            interleaved = True
+            assert ledger.get_session("case-concurrent-new") is None
+            integrated.spans, integrated.colour = ["beta"], "green"
+            newer = runner.replay([case], rules, persist=True, pack_version=version)
+            assert (newer.changed_cases, newer.changed_atoms) == (1, 1)
+            newest, = ledger.get_session("case-concurrent-new").verdicts
+            assert newest.verdict == "green" and newest.supersedes is None
+            expected = replay_state()
+        return result
+
+    monkeypatch.setattr(runner, "_compute", compute_then_create)
+    with pytest.raises(ValueError, match="Session changed during replay.*again"):
+        runner.replay([case], rules, persist=True, pack_version=version)
+    assert interleaved and replay_state() == expected
+    stored = ledger.get_session("case-concurrent-new")
+    assert [atom.span for atom in stored.atoms] == ["beta"] and stored.verdicts == [newest]
+    assert count("verdicts") == 1 and integrated.calls == calls
+
+
+@pytest.mark.parametrize("purpose", ["live", "oracle"])
+def test_explicit_nonpersisting_replay_ignores_current_pack(
+        integrated, monkeypatch, tmp_path, purpose):
+    monkeypatch.setattr(settings, "LLM_BACKEND", "api")
+    monkeypatch.setattr(settings, "LLM_CACHE_DIR", str(tmp_path / "measure-cache"))
+    stale_version = ledger.current_pack().version
+    rules = load_pack([], mode="measure")
+    case = dict(case_id="nonpersisting", sku_id="kera", text="alpha")
+    runner.run_cases([case], "shadow", rules, stale_version)
+    calls = list(integrated.calls)
+    ledger.create_pack_version([], [], "merge", approved_by="hungkhuu404")
+    expected = replay_state()
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("explicit nonpersisting replay accessed the ledger")
+
+    with monkeypatch.context() as no_ledger:
+        for name in ("current_pack", "get_session", "transaction", "record_llm_call"):
+            no_ledger.setattr(ledger, name, forbidden)
+        result, = runner.replay([case], rules, purpose=purpose, pack_version=stale_version)
+    assert result.status == "ok" and result.case_verdict == "green"
+    assert result.verdicts[0].rule_pack_version == stale_version
+    assert replay_state() == expected and integrated.calls == calls
 
 
 def test_backfill_across_sessions_is_one_atomic_transaction(integrated, monkeypatch):
