@@ -108,7 +108,11 @@ def _legal_basis(family: str, category: str, as_of: date) -> list[str]:
     return kept
 
 
-def _rule_meta(rule_id: str):
+def _rule_meta(rule_id: str, pack=None):
+    if pack is not None:
+        for info in (*pack.active, *pack.quarantined):
+            if info.rule_id == rule_id:
+                return info.meta
     try:
         from rules.registry import all_rules
     except ModuleNotFoundError as exc:
@@ -137,8 +141,8 @@ def _checked_law_span(span: str | list[str] | None, anchors: list[str]) -> str |
 
 
 def finalize(draft: Mapping | BaseModel, ctx: Context | Mapping,
-             rule_pack_version: int) -> Verdict:
-    """Validate a router draft against its dated law and dossier sources."""
+             rule_pack_version: int, *, pack=None) -> Verdict:
+    """Validate a draft, preferring metadata from an explicit runtime pack."""
     source, context = _record(draft), _record(ctx)
     values = {name: value for name, value in source.items() if name in Verdict.model_fields}
     colour = Colour(values["verdict"])
@@ -179,7 +183,7 @@ def finalize(draft: Mapping | BaseModel, ctx: Context | Mapping,
         else:
             values["legal_basis"] = anchors
             if colour == Colour.RED:
-                meta = _rule_meta(values["decided_by"].removeprefix("rule:"))
+                meta = _rule_meta(values["decided_by"].removeprefix("rule:"), pack=pack)
                 if meta is not None and meta.family != family:
                     raise ValueError("Draft family disagrees with the deciding rule")
                 span = meta.law_span if meta is not None else None
