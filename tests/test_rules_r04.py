@@ -74,6 +74,14 @@ def test_source_offsets_and_whole_syllables(rule):
     assert [hit.matched for hit in rule.check(atom(text))] == ["CHỮA   BỆNH", "điều trị"]
 
 
+def test_expanded_syllables_keep_full_original_token(rule):
+    from rules._common import syllable_matches
+    text = "SP, sản phẩm"
+    matches = syllable_matches(text, ("sản phẩm",))
+    assert [match.matched for match in matches] == ["SP", "sản phẩm"]
+    assert all(text[match.start:match.end] == match.matched for match in matches)
+
+
 def test_disclaimer_lcs(rule):
     from rules._common import is_disclaimer
     assert is_disclaimer("Thực phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh")

@@ -18,7 +18,7 @@ class SyllableMatch:
 
 def syllable_matches(text, phrases):
     """Return whole, contiguous syllable runs in source order."""
-    from textnorm import match_key
+    from textnorm import locate, match_key
 
     key, offsets = match_key(text)
     matches = []
@@ -26,8 +26,14 @@ def syllable_matches(text, phrases):
         phrase_key, _ = match_key(phrase)
         for match in re.finditer(r"(?<!\w)" + re.escape(phrase_key) + r"(?!\w)", key):
             start = offsets[match.start()]
-            end = offsets[match.end() - 1] + 1
-            matches.append(SyllableMatch(phrase, text[start:end], start, end))
+            last = offsets[match.end() - 1]
+            limit = next((offset for offset in offsets[match.end():] if offset > last), len(text))
+            # Bound locate to this occurrence: exact matches later in the text win otherwise.
+            located = locate(match.group(), text[start:limit])
+            if located is None:
+                raise ValueError("Matching key has no source span")
+            begin, end = start + located[0], start + located[1]
+            matches.append(SyllableMatch(phrase, text[begin:end], begin, end))
     return sorted(matches, key=lambda match: (match.start, match.end))
 
 
