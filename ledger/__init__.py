@@ -1,6 +1,6 @@
 """Transactional SQLite ledger. Each operation joins the caller's transaction."""
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 import json
@@ -77,21 +77,26 @@ def transaction():
 
 @contextmanager
 def _read():
+    """Share one deferred read snapshot across nested ledger lookups."""
     conn = _connection.get()
     if conn is not None:
         yield conn
     else:
         conn = _connect()
+        token = _connection.set(conn)
         try:
+            conn.execute("BEGIN")
             yield conn
         finally:
+            _connection.reset(token)
+            conn.rollback()
             conn.close()
 
 
 def init_db(path, exclude_rules=()):
     set_override("LEDGER_DB", str(path))
     ledger_db(create=True)
-    with _read() as conn:
+    with closing(_connect()) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(Path(__file__).with_name("schema.sql").read_text(encoding="utf-8"))
     with transaction() as conn:
@@ -211,8 +216,8 @@ def latest_verdicts(session_id, pack_version=None):
 
 
 def effective_verdicts(session_id, pack_version=None):
-    version = current_pack().version if pack_version is None else pack_version
     with _read() as conn:
+        version = current_pack().version if pack_version is None else pack_version
         rows = conn.execute("""SELECT v.verdict_id,v.data FROM verdicts v
             JOIN atoms a ON a.atom_key=v.atom_key WHERE a.session_id=? AND v.verdict_id=(
             SELECT MAX(w.verdict_id) FROM verdicts w WHERE w.atom_key=v.atom_key
