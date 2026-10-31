@@ -117,6 +117,10 @@ class Ledger:
     def append_event(self, kind, payload):
         self.events.append((kind, payload))
 
+    def events_since(self, id, limit=500):
+        return [SimpleNamespace(id=index, type=kind, payload=payload)
+                for index, (kind, payload) in enumerate(self.events, 1) if index > id][:limit]
+
     def record_llm_call(self, call):
         assert not self.in_transaction
         self.calls.append(call)
