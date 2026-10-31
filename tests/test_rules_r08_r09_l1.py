@@ -48,9 +48,10 @@ def atom(text, **changes):
 @pytest.fixture
 def records(monkeypatch):
     # Exercise rule decisions independently while the shared records are landing.
+    models = ready("core.models")
     monkeypatch.setitem(sys.modules, "rules._common", SimpleNamespace(
-        make_hit=lambda **fields: SimpleNamespace(**fields),
-        make_session_flag=lambda **fields: SimpleNamespace(verdict="red", **fields),
+        make_hit=models.RuleHit,
+        make_session_flag=lambda **fields: models.SessionFlag(**fields),
     ))
 
 
