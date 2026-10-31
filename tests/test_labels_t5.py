@@ -86,8 +86,9 @@ def test_third_label_starts_one_job(world, origin, pattern):
     first = record(1, origin=origin, pattern=pattern)
     record(2, origin=origin, pattern=pattern)
     assert ledger.list_jobs() == [] and world.calls == []
+    target, _ = seed(3, origin=origin, pattern=pattern)
     before = time.monotonic()
-    record(3, origin=origin, pattern=pattern)
+    labels.record_label(target, "red", "R04", "fixture")
     assert world.started.wait(max(0, 1 - (time.monotonic() - before)))
     assert time.monotonic() - before < 1
     job, = ledger.list_jobs()
