@@ -164,6 +164,7 @@ def _check_staged(files):
 
 def merge(rule_id, approved_by):
     import ledger
+    from rules.registry import load_pack
     if not isinstance(approved_by, str) or not approved_by.strip():
         raise ValueError("approved_by is required")
     files = _files(rule_id)
@@ -201,7 +202,7 @@ def merge(rule_id, approved_by):
                         raise ValueError("Rule pack changed; repeat the merge with the current pack")
                     pack = ledger.create_pack_version([*row.active, rule_id], row.quarantined,
                         "merge", rule_id=rule_id, approved_by=approved_by)
-                    backfill(pack)
+                    backfill(load_pack(pack.active, quarantined=pack.quarantined, mode="live"))
                     ledger.append_event("rule.merged", dict(rule_id=rule_id, version=pack.version, approved_by=approved_by))
                     if settings.REGRESSION_AUTOCOMMIT:
                         _git(paths.REPO_ROOT, "add", "--", *files)

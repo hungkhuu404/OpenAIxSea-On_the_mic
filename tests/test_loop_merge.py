@@ -1,7 +1,6 @@
 """Synthetic activation, offline replay and stage-ledger restoration."""
 
 import builtins
-import importlib
 import json
 from pathlib import Path
 import sqlite3
@@ -16,7 +15,7 @@ from core.config import set_override, settings
 from core.models import Atom, ClusterFile, ClusterRun, Context, Job, JobAttempt, RuleAttempt, RuleMeta, Session, Turn
 import ledger
 from loop import merge as m
-from pipeline import aggregate, context, extract, guardrail, llm, runner
+from pipeline import aggregate, context, dossier_events, extract, guardrail, llm, runner
 from rules import registry
 
 TS = "2026-10-21T00:00:00Z"
@@ -92,15 +91,18 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(extract, "extract_atoms", extract_atoms)
     monkeypatch.setattr(llm, "_backend", lambda *args: pytest.fail("Unexpected model transport"))
     backfills = []
-    def backfill(pack):
+    def backfill(runtime):
+        pack = ledger.current_pack()
+        assert runtime.mode == "live" and [info.rule_id for info in runtime.active] == pack.active
         backfills.append(pack)
-        runtime = registry.load_pack(pack.active, quarantined=pack.quarantined, mode="live")
         results = runner.replay([session.session_id for session in ledger.list_sessions()], pack=runtime,
                                 pack_version=pack.version, persist=True, purpose="live")
         ledger.append_event("backfill.done", dict(version=pack.version, changed_cases=results.changed_cases,
                                                   changed_atoms=results.changed_atoms))
-    monkeypatch.setitem(sys.modules, "pipeline.dossier_events", SimpleNamespace(backfill=backfill))
-    return SimpleNamespace(root=root, remote=remote, backfills=backfills)
+    events = SimpleNamespace(backfill=backfill, _mark_recalled=dossier_events._mark_recalled,
+                             _recall_state=dossier_events._recall_state)
+    monkeypatch.setitem(sys.modules, "pipeline.dossier_events", events)
+    return SimpleNamespace(root=root, remote=remote, backfills=backfills, events=events)
 
 
 def seed(session_id="synthetic", sku="synthetic", text="synthetic treatment"):
@@ -130,7 +132,10 @@ def test_no_passing_gate_is_refused(world, status, gate):
     assert RuleMeta.model_validate_json((world.root / FILES[1]).read_text()).approved_by is None
 
 
-def test_fresh_ledger_dry_run_merge_and_snapshot_restore(world, tmp_path):
+@pytest.mark.parametrize("real_backfill", [False, True])
+def test_fresh_ledger_dry_run_merge_and_snapshot_restore(world, tmp_path, monkeypatch, real_backfill):
+    if real_backfill:
+        monkeypatch.setitem(sys.modules, "pipeline.dossier_events", dossier_events)
     candidate(world.root)
     ledger.init_db(tmp_path / "fresh stage.db")
     stored = seed()
@@ -148,7 +153,7 @@ def test_fresh_ledger_dry_run_merge_and_snapshot_restore(world, tmp_path):
     assert ledger.events_since(0) == before_events and ledger.current_pack().version == 1
     pack = m.merge(RULE, "fixture")
     assert pack.version == 2 and pack.change == "merge" and pack.active == [RULE]
-    assert world.backfills == [pack]
+    assert world.backfills == ([] if real_backfill else [pack])
     current = ledger.get_session("synthetic").verdicts[0]
     assert current.supersedes == old_id and current.verdict == "red" and current.rule_pack_version == 2
     assert aggregate.who_decided([current]).code == 1
@@ -266,7 +271,7 @@ def test_autocommit_rechecks_staging_after_backfill(world, monkeypatch):
         original(pack)
         (world.root / "unrelated.txt").write_text("Synthetic\n", encoding="utf-8")
         git(world.root, "add", "unrelated.txt")
-    monkeypatch.setitem(sys.modules, "pipeline.dossier_events", SimpleNamespace(backfill=stage_unrelated))
+    monkeypatch.setattr(world.events, "backfill", stage_unrelated)
     with pytest.raises(ValueError, match="Unrelated"):
         m.merge(RULE, "fixture")
     assert ledger.current_pack().version == 1
@@ -287,20 +292,53 @@ def test_missing_t7_does_not_approve_or_activate(world, monkeypatch):
     assert ledger.current_pack().version == 1 and (world.root / FILES[1]).read_bytes() == before
 
 
-def test_real_t7_backfill_integration_when_available(world, monkeypatch):
-    monkeypatch.delitem(sys.modules, "pipeline.dossier_events")
-    try:
-        importlib.import_module("pipeline.dossier_events")
-    except ModuleNotFoundError as exc:
-        if exc.name != "pipeline.dossier_events":
-            raise
-        pytest.skip("not ready: pipeline.dossier_events")
+def test_real_t7_backfill_integration(world, monkeypatch):
+    monkeypatch.setitem(sys.modules, "pipeline.dossier_events", dossier_events)
     candidate(world.root)
     previous = seed().verdicts[0]
+    before = ledger.current_pack().version
+    assert aggregate.who_decided([previous]).human == 1
     pack = m.merge(RULE, "fixture")
     current = ledger.get_session("synthetic").verdicts[0]
+    assert pack.version == before + 1 and pack.active == [RULE]
     assert current.verdict == "red" and current.supersedes == previous.verdict_id
     assert current.rule_pack_version == pack.version
+    assert aggregate.who_decided([current]).code == 1
+    events = ledger.events_since(0)
+    assert [event.type for event in events][-2:] == ["backfill.done", "rule.merged"]
+    assert events[-2].payload == dict(version=pack.version, changed_cases=1, changed_atoms=1)
+    assert events[-1].payload == dict(version=pack.version, rule_id=RULE, approved_by="fixture")
+    assert world.backfills == []
+
+
+def test_real_t7_backfill_rolls_back_after_writes(world, monkeypatch):
+    monkeypatch.setitem(sys.modules, "pipeline.dossier_events", dossier_events)
+    candidate(world.root)
+    previous = seed().verdicts[0]
+    before_pack = ledger.current_pack()
+    before_meta = (world.root / FILES[1]).read_bytes()
+    before_index = git(world.root, "write-tree")
+    def counts():
+        with sqlite3.connect(settings.LEDGER_DB) as conn:
+            return [conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                    for table in ("verdicts", "rule_packs", "events", "atoms", "session_flags")]
+    before_counts = counts()
+    emitted = []
+    original = ledger.append_event
+    def fail_after_backfill(event_type, payload):
+        emitted.append(event_type)
+        if event_type == "rule.merged":
+            raise ValueError("Synthetic failure after real backfill writes")
+        return original(event_type, payload)
+    monkeypatch.setattr(ledger, "append_event", fail_after_backfill)
+    with pytest.raises(ValueError, match="after real backfill"):
+        m.merge(RULE, "fixture")
+    assert emitted[-2:] == ["backfill.done", "rule.merged"]
+    assert counts() == before_counts and ledger.current_pack() == before_pack
+    assert ledger.get_session("synthetic").verdicts == [previous]
+    assert aggregate.who_decided([previous]).human == 1
+    assert (world.root / FILES[1]).read_bytes() == before_meta
+    assert git(world.root, "write-tree") == before_index and world.backfills == []
 
 
 def test_backfill_failure_rolls_back_pack_files_and_own_index(world, monkeypatch):
@@ -309,9 +347,9 @@ def test_backfill_failure_rolls_back_pack_files_and_own_index(world, monkeypatch
     before = (world.root / FILES[1]).read_bytes()
     index = git(world.root, "write-tree")
     def broken(pack):
-        ledger.append_event("backfill.done", {"version": pack.version})
+        ledger.append_event("backfill.done", {"version": ledger.current_pack().version})
         raise ValueError("Synthetic backfill failure")
-    monkeypatch.setitem(sys.modules, "pipeline.dossier_events", SimpleNamespace(backfill=broken))
+    monkeypatch.setattr(world.events, "backfill", broken)
     with pytest.raises(ValueError, match="Synthetic"):
         m.merge(RULE, "fixture")
     assert ledger.current_pack().version == 1 and ledger.events_since(0) == []
