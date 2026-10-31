@@ -112,6 +112,43 @@ def test_process_reprocess_real_sqlite_preserves_history_and_search(integrated):
     assert [row["snippet"] for row in ledger.search("gamma") if row["kind"] == "atom"] == ["gamma"]
 
 
+@pytest.mark.parametrize("operation", ["replay", "reprocess"])
+def test_rule_off_replaces_real_session_flags(integrated, operation):
+    ledger.create_pack_version(["R06"], [], "merge", approved_by="hungkhuu404")
+    ledger.add_session(session().model_copy(update={"sku_pin": "non_alco"}))
+    # Initial processing warms S1 before the cache-only replay.
+    first = runner.process_session("sqlite-fixture", "live")
+    assert [flag.rule_id for flag in first.flags] == ["R06"]
+    assert first.case_verdict == "red" and first.case_decided_by == "rule:R06"
+    assert ledger.get_session("sqlite-fixture").flags == first.flags
+    assert count("session_flags") == count("verdicts") == 1
+    calls = list(integrated.calls)
+    pack = ledger.create_pack_version([], [], "merge", approved_by="hungkhuu404")
+    if operation == "replay":
+        results = runner.replay(["sqlite-fixture"], persist=True)
+        assert (results.changed_cases, results.changed_atoms) == (1, 0)
+        result, = results
+        assert result.status == "ok"
+        assert ledger.get_session("sqlite-fixture").verdicts == first.verdicts
+        expected_count = 1
+    else:
+        result = runner.process_session("sqlite-fixture", "live", reprocess=True)
+        assert result.flags == [] and result.verdicts[0].rule_pack_version == pack.version
+        assert result.verdicts[0].supersedes == first.verdicts[0].verdict_id
+        expected_count = 2
+    stored = ledger.get_session("sqlite-fixture")
+    assert stored.flags == [] and count("session_flags") == 0
+    assert [row.reason_code for row in stored.verdicts] == ["DOSSIER_EMPTY"]
+    assert runner.process_session("sqlite-fixture", "live").case_verdict == result.case_verdict == "abstain"
+    assert ledger.get_verdict(first.verdicts[0].verdict_id) == first.verdicts[0]
+    repeated = runner.replay(["sqlite-fixture"], persist=True)
+    assert repeated[0].status == "ok" and repeated[0].case_verdict == "abstain"
+    assert (repeated.changed_cases, repeated.changed_atoms) == (0, 0)
+    assert ledger.get_session("sqlite-fixture") == stored
+    assert count("session_flags") == 0 and count("verdicts") == expected_count
+    assert integrated.calls == calls
+
+
 def test_process_reports_missing_session(integrated):
     with pytest.raises(ValueError, match="Session not found"):
         runner.process_session("missing", "live")
@@ -185,14 +222,18 @@ def test_pack_change_during_compute_rejects_stale_persistence(integrated, monkey
 
 def test_reprocess_real_sqlite_rolls_back_atoms_verdicts_search_and_events(integrated, monkeypatch):
     state = integrated
-    ledger.add_session(session())
+    ledger.create_pack_version(["R06"], [], "merge", approved_by="hungkhuu404")
+    ledger.add_session(session().model_copy(update={"sku_pin": "non_alco"}))
     state.spans = ["alpha", "beta"]
     runner.process_session("sqlite-fixture", "live")
     before = ledger.get_session("sqlite-fixture").model_dump()
+    assert [flag["rule_id"] for flag in before["flags"]] == ["R06"]
+    ledger.create_pack_version([], [], "merge", approved_by="hungkhuu404")
     events = ledger.events_since(0)
     original = ledger.append_event
     def fail(kind, payload):
         if kind == "turn.verdict":
+            assert ledger.get_session("sqlite-fixture").flags == []
             raise RuntimeError("synthetic final persistence failure")
         return original(kind, payload)
     monkeypatch.setattr(ledger, "append_event", fail)
@@ -210,44 +251,102 @@ def test_backfill_effective_rows_counts_approval_and_no_duplicate_writes(integra
     first = runner.process_session("sqlite-fixture", "live")
     flagged = first.verdicts[0].model_copy(update={"flags": [AtomFlag.RECALLED_AFTER]})
     previous_id, = ledger.append_verdicts([flagged])
+    historical = ledger.get_verdict(previous_id)
     ledger.create_pack_version([], [], "merge", approved_by="hungkhuu404")
     extracts = state.extracts
     skipped = runner.process_session("sqlite-fixture", "live")
     assert state.extracts == extracts and skipped.verdicts[0].rule_pack_version == 1
     rules = load_pack([], mode="live")
+    cleared = runner.replay(["sqlite-fixture"], rules, persist=True, pack_version=2)
+    assert isinstance(cleared, list) and cleared[0].status == "ok"
+    assert (cleared.changed_cases, cleared.changed_atoms) == (1, 1)
+    cleared_verdict, = ledger.effective_verdicts("sqlite-fixture")
+    assert cleared_verdict.verdict == "green" and cleared_verdict.flags == []
+    assert cleared_verdict.supersedes == previous_id and cleared_verdict.rule_pack_version == 2
+    assert ledger.get_verdict(previous_id) == historical
     unchanged = runner.replay(["sqlite-fixture"], rules, persist=True, pack_version=2)
-    assert isinstance(unchanged, list) and unchanged[0].status == "ok"
     assert (unchanged.changed_cases, unchanged.changed_atoms) == (0, 0)
-    assert count("verdicts") == 2
+    assert count("verdicts") == 3
     state.colour = "yellow"
     changed = runner.replay(["sqlite-fixture"], rules, persist=True, pack_version=2)
     assert (changed.changed_cases, changed.changed_atoms) == (1, 1)
     effective, = ledger.effective_verdicts("sqlite-fixture")
     assert effective.verdict == "yellow" and effective.rule_pack_version == 2
-    assert effective.supersedes == previous_id and effective.flags == [AtomFlag.RECALLED_AFTER]
+    assert effective.supersedes == cleared_verdict.verdict_id and effective.flags == []
     repeated = runner.replay(["sqlite-fixture"], rules, persist=True, pack_version=2)
     assert (repeated.changed_cases, repeated.changed_atoms) == (0, 0)
-    assert count("verdicts") == 3
+    assert count("verdicts") == 4
     earlier, = ledger.effective_verdicts("sqlite-fixture", 1)
-    assert earlier.verdict == "green"
+    assert earlier.verdict == "green" and earlier == historical
+    assert ledger.get_verdict(first.verdicts[0].verdict_id) == first.verdicts[0]
+
+
+def test_backfill_uses_only_current_quarantine_flags_and_keeps_history(integrated):
+    quarantined = ledger.create_pack_version([], ["R04"], "quarantine", rule_id="R04",
+                                             approved_by="hungkhuu404")
+    ledger.add_session(session(text="chữa bệnh"))
+    # Shadow warms E even though the quarantined rule decides the verdict.
+    first = runner.process_session("sqlite-fixture", "shadow")
+    original = first.verdicts[0]
+    assert original.flags == [AtomFlag.PREV_RED] and original.reason_code == "RULE_QUARANTINED"
+    assert ledger.get_session("sqlite-fixture").verdicts == [original]
+    calls = list(integrated.calls)
+    unflagged = ledger.create_pack_version([], [], "merge", approved_by="hungkhuu404")
+    cleared = runner.replay(["sqlite-fixture"], persist=True)
+    assert cleared[0].status == "ok" and cleared[0].case_verdict == "green"
+    assert (cleared.changed_cases, cleared.changed_atoms) == (1, 1)
+    current, = ledger.get_session("sqlite-fixture").verdicts
+    assert current.verdict == "green" and current.flags == []
+    assert current.supersedes == original.verdict_id and current.rule_pack_version == unflagged.version
+    assert ledger.get_verdict(original.verdict_id) == original and count("verdicts") == 2
+    earlier, = ledger.effective_verdicts("sqlite-fixture", quarantined.version)
+    assert earlier == original
+    repeated = runner.replay(["sqlite-fixture"], persist=True)
+    assert (repeated.changed_cases, repeated.changed_atoms) == (0, 0)
+    assert count("verdicts") == 2
+
+    pack = ledger.create_pack_version([], ["R04"], "quarantine", rule_id="R04",
+                                      approved_by="hungkhuu404")
+    generated = runner.replay(["sqlite-fixture"], persist=True)
+    assert generated[0].status == "ok" and generated[0].case_verdict == "abstain"
+    assert (generated.changed_cases, generated.changed_atoms) == (1, 1)
+    flagged, = ledger.get_session("sqlite-fixture").verdicts
+    assert generated[0].verdicts == [flagged]
+    assert flagged.flags == [AtomFlag.PREV_RED] and flagged.reason_code == "RULE_QUARANTINED"
+    assert flagged.supersedes == current.verdict_id and flagged.rule_pack_version == pack.version
+    assert ledger.get_verdict(original.verdict_id) == original
+    assert ledger.get_verdict(current.verdict_id) == current and count("verdicts") == 3
+    repeated = runner.replay(["sqlite-fixture"], persist=True)
+    assert (repeated.changed_cases, repeated.changed_atoms) == (0, 0)
+    assert ledger.get_session("sqlite-fixture").verdicts == [flagged] and count("verdicts") == 3
+    assert integrated.calls == calls
 
 
 def test_backfill_across_sessions_is_one_atomic_transaction(integrated, monkeypatch):
     state = integrated
+    ledger.create_pack_version(["R06"], [], "merge", approved_by="hungkhuu404")
     for name in ("first", "second"):
-        ledger.add_session(session(name))
+        value = session(name)
+        if name == "first":
+            value = value.model_copy(update={"sku_pin": "non_alco"})
+        ledger.add_session(value)
         runner.process_session(name, "live")
+    before = {name: ledger.get_session(name).model_dump() for name in ("first", "second")}
+    assert [flag["rule_id"] for flag in before["first"]["flags"]] == ["R06"]
+    pack = ledger.create_pack_version([], [], "merge", approved_by="hungkhuu404")
     state.colour = "yellow"
     original = ledger.append_verdicts
     def fail(verdicts):
+        assert ledger.get_session("first").flags == []
         original(verdicts[:1])
         raise RuntimeError("synthetic backfill failure")
     monkeypatch.setattr(ledger, "append_verdicts", fail)
     with pytest.raises(RuntimeError, match="backfill failure"):
         runner.replay(["first", "second"], load_pack([], mode="live"),
-                      persist=True, pack_version=1)
+                      persist=True, pack_version=pack.version)
     assert count("verdicts") == 2
-    assert [ledger.get_session(name).verdicts[0].verdict for name in ("first", "second")] == ["green"] * 2
+    assert {name: ledger.get_session(name).model_dump() for name in before} == before
+    assert [ledger.get_session(name).verdicts[0].verdict for name in before] == ["abstain", "green"]
 
 
 def test_explicit_live_pack_can_persist_in_memory_cases(integrated):

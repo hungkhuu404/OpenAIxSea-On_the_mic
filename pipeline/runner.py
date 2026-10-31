@@ -162,7 +162,7 @@ def process_session(session_id, purpose, reprocess=False, *, cache_read=True) ->
         ids = ledger.append_verdicts(computed.verdicts)
         for verdict, verdict_id in zip(computed.verdicts, ids, strict=True):
             verdict.verdict_id = verdict_id
-        ledger.add_session_flags(session_id, computed.flags)
+        ledger.replace_session_flags(session_id, computed.flags)
         for kind, payload in events:
             ledger.append_event(kind, payload)
         for atom, verdict in zip(computed.atoms, computed.verdicts, strict=True):
@@ -268,8 +268,6 @@ def replay(targets, pack=None, persist=False, purpose="live", pack_version=None)
             changed = []
             for verdict in item.verdicts:
                 previous = prior.get(verdict.atom_key)
-                if previous is not None:
-                    verdict.flags = list(dict.fromkeys([*previous.flags, *verdict.flags]))
                 if previous is None or _changed(previous, verdict):
                     if previous is not None:
                         verdict.supersedes = previous.verdict_id
@@ -288,7 +286,7 @@ def replay(targets, pack=None, persist=False, purpose="live", pack_version=None)
                         ledger.add_atoms(item.session.session_id, item.atoms)
                     elif atoms_changed:
                         ledger.replace_atoms(item.session.session_id, item.atoms)
-                    ledger.add_session_flags(item.session.session_id, item.flags)
+                    ledger.replace_session_flags(item.session.session_id, item.flags)
                 ids = ledger.append_verdicts(pending)
                 for verdict, verdict_id in zip(pending, ids, strict=True):
                     verdict.verdict_id = verdict_id

@@ -110,7 +110,7 @@ class Ledger:
         assert self.in_transaction
         self.index[atom.atom_id] = atom.span
 
-    def add_session_flags(self, session_id, flags):
+    def replace_session_flags(self, session_id, flags):
         assert self.in_transaction
         self.flags = deepcopy(flags)
 
@@ -346,19 +346,30 @@ def test_transaction_rolls_back_partial_write(boundary, monkeypatch):
     assert fake.events == []
 
 
-def test_backfill_only_changes_with_supersedes_and_old_flags(boundary, monkeypatch):
+def test_backfill_drops_old_only_flags_and_preserves_history(boundary, monkeypatch):
     _, state = boundary
     fake = install_ledger(monkeypatch, state)
     first = runner.process_session("fixture", "live")
     fake.history[0].flags = [AtomFlag.RECALLED_AFTER]
-    unchanged, = runner.replay(["fixture"], persist=True)
-    assert unchanged.status == "ok" and len(fake.history) == 1 and fake.transactions == 1
-    state.colour = "yellow"
-    changed, = runner.replay(["fixture"], persist=True)
-    assert changed.status == "ok" and len(fake.history) == 2 and fake.transactions == 2
+    original = deepcopy(fake.history[0])
+    cleared = runner.replay(["fixture"], persist=True)
+    assert cleared[0].status == "ok" and len(fake.history) == 2 and fake.transactions == 2
+    assert (cleared.changed_cases, cleared.changed_atoms) == (1, 1)
     assert fake.history[-1].supersedes == first.verdicts[0].verdict_id
-    assert fake.history[-1].flags == ["RECALLED_AFTER"]
+    assert fake.history[-1].flags == [] and fake.history[-1].verdict == "green"
+    assert fake.history[0] == original
+    unchanged = runner.replay(["fixture"], persist=True)
+    assert (unchanged.changed_cases, unchanged.changed_atoms) == (0, 0)
+    assert len(fake.history) == 2 and fake.transactions == 2
+    state.colour = "yellow"
+    changed = runner.replay(["fixture"], persist=True)
+    assert changed[0].status == "ok" and len(fake.history) == 3 and fake.transactions == 3
+    assert (changed.changed_cases, changed.changed_atoms) == (1, 1)
+    assert fake.history[-1].supersedes == fake.history[-2].verdict_id
+    assert fake.history[-1].flags == [] and fake.history[0] == original
     assert fake.history[-1].verdict == "yellow"
+    assert [row.verdict_id for row in fake.history] == [1, 2, 3]
+    assert [row.supersedes for row in fake.history] == [None, 1, 2]
 
 
 def test_explicit_measure_pack_never_opens_ledger(boundary):
