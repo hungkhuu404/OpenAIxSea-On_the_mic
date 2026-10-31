@@ -4,9 +4,10 @@ import os
 from pathlib import Path
 import shutil
 import shlex
+import socket
 import subprocess
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -356,8 +357,8 @@ def test_execution_errors_are_recorded_and_nonzero_gate_pass_retries(world, monk
     assert events[-1].type == "job.finished" and events[-1].payload["status"] == result.status
 
 
-@pytest.mark.parametrize("needs_kill", [False, True], ids=["terminate", "kill-after-wait-timeout"])
-def test_attempt_exception_reaps_managed_process_and_clears_pid(world, monkeypatch, needs_kill):
+@pytest.mark.parametrize("cleanup_fails", [False, True], ids=["tree-stopped", "tree-stop-failed"])
+def test_attempt_exception_clears_pid_only_after_tree_stops(world, monkeypatch, cleanup_fails):
     import ledger
 
     original = subprocess.Popen
@@ -373,20 +374,14 @@ def test_attempt_exception_reaps_managed_process_and_clears_pid(world, monkeypat
             assert prompt == draft.ALLOWED_COMMANDS + "\n\n" + draft.FOLLOW
             raise subprocess.TimeoutExpired("synthetic worker", 1)
 
-        def terminate(self):
-            calls.append("terminate")
-
-        def wait(self, timeout=None):
-            calls.append(("wait", timeout))
-            if needs_kill and timeout is not None:
-                raise subprocess.TimeoutExpired("synthetic managed process", timeout)
-            self.returncode = 1
-            return self.returncode
-
-        def kill(self):
-            calls.append("kill")
-
     process = Process()
+
+    def terminate_tree(target):
+        assert target is process
+        calls.append(target.pid)
+        if cleanup_fails:
+            raise RuntimeError("Synthetic tree cleanup failed")
+        target.returncode = 1
 
     def popen(args, *positional, **kwargs):
         if "--sandbox" in args:
@@ -394,13 +389,133 @@ def test_attempt_exception_reaps_managed_process_and_clears_pid(world, monkeypat
         return original(args, *positional, **kwargs)
 
     monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(draft, "_terminate_tree", terminate_tree)
     result = job(world)
     assert result.status == "error" and len(result.attempts) == 1
-    assert "timed out" in result.attempts[0].error_lines[0]
-    assert calls == (["terminate", ("wait", 5), "kill", ("wait", None)] if needs_kill
-                     else ["terminate", ("wait", 5)])
-    assert process.returncode == 1
-    assert result.pid is None and not (paths.jobs_dir() / "job1.pid").exists()
+    assert ("cleanup failed" if cleanup_fails else "timed out") in result.attempts[0].error_lines[0]
+    assert calls == [process.pid]
+    assert process.returncode == (None if cleanup_fails else 1)
+    assert result.pid == (process.pid if cleanup_fails else None)
+    assert (paths.jobs_dir() / "job1.pid").exists() == cleanup_fails
+
+
+@pytest.mark.parametrize("kill_fails", [False, True])
+def test_windows_tree_stop_targets_pid_and_descendants(monkeypatch, kill_fails):
+    calls = []
+    process = SimpleNamespace(pid=87654, wait=lambda timeout: calls.append(("wait", timeout)))
+    monkeypatch.setattr(draft, "os", SimpleNamespace(name="nt"))
+
+    def run(args, **kwargs):
+        calls.append((args, kwargs))
+        if kill_fails:
+            raise subprocess.CalledProcessError(1, args)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    if kill_fails:
+        with pytest.raises(subprocess.CalledProcessError):
+            draft._terminate_tree(process)
+    else:
+        draft._terminate_tree(process)
+    expected = [(["taskkill", "/PID", "87654", "/T", "/F"], dict(
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=True, shell=False))]
+    assert calls == expected + ([] if kill_fails else [("wait", 5)])
+
+
+def _assert_worker_connection_closed(connection):
+    try:
+        assert connection.recv(1) == b""
+    except ConnectionResetError:
+        pass
+
+
+@pytest.mark.parametrize("outcome, error", [
+    (b"", None),
+    (ConnectionResetError("forced peer close"), None),
+    (b"x", AssertionError),
+    (TimeoutError("peer still connected"), TimeoutError),
+    (OSError("other socket failure"), OSError),
+])
+def test_worker_connection_closed_check(outcome, error):
+    def recv(size):
+        assert size == 1
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    connection = SimpleNamespace(recv=recv)
+    if error is None:
+        _assert_worker_connection_closed(connection)
+    else:
+        with pytest.raises(error):
+            _assert_worker_connection_closed(connection)
+
+
+def test_cancel_stops_worker_behind_launcher_without_stopping_other_process(world, monkeypatch):
+    import ledger
+
+    script = world["base"].parent / "launcher with spaces.py"
+    shutil.copyfile(ROOT / "tests/loop_fixtures/fake_codex_launcher.py", script)
+    worker = world["base"].parent / "fake tool with spaces.py"
+    set_override("CODEX_CMD", f'"{sys.executable}" "{script}" "{worker}"')
+    original = subprocess.Popen
+    managed, connections = [], []
+    with socket.socket() as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        server.settimeout(10)
+        monkeypatch.setenv("DRAFT_TEST_CANCEL_PORT", str(server.getsockname()[1]))
+        bystander = original([sys.executable, "-c", "import sys; sys.stdin.buffer.read()"],
+                             stdin=subprocess.PIPE)
+
+        def popen(args, *positional, **kwargs):
+            process = original(args, *positional, **kwargs)
+            if "--sandbox" not in args:
+                return process
+            managed.append(process)
+
+            def cancel(prompt):
+                assert ledger.get_job("job1").pid == process.pid
+                assert int((paths.jobs_dir() / "job1.pid").read_text(encoding="utf-8")) == process.pid
+                process.stdin.write(prompt)
+                process.stdin.close()
+                process.stdin = None
+                connection, _ = server.accept()
+                connections.append(connection)
+                connection.settimeout(2)
+                assert connection.recv(1) == b"R"
+                record = json.loads((world["capture"] / "job1-1.json").read_text(encoding="utf-8"))
+                assert record["worker_pid"] != process.pid
+                raise InterruptedError("Synthetic cancellation after worker readiness")
+
+            process.communicate = cancel
+            return process
+
+        monkeypatch.setattr(subprocess, "Popen", popen)
+        try:
+            result = job(world)
+            assert result.status == "error" and len(result.attempts) == 1
+            assert "Synthetic cancellation" in result.attempts[0].error_lines[0]
+            assert len(managed) == len(connections) == 1
+            assert managed[0].poll() is not None
+            # The worker holds this socket until exit, even after its launcher dies.
+            _assert_worker_connection_closed(connections[0])
+            assert bystander.poll() is None
+            assert result.pid is None and not (paths.jobs_dir() / "job1.pid").exists()
+        finally:
+            for connection in connections:
+                try:
+                    connection.sendall(b"x")
+                except OSError:
+                    pass
+                connection.close()
+            for process in managed:
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+            bystander.stdin.close()
+            bystander.wait(timeout=10)
 
 
 def test_cluster_autocommit_records_previous_commit_on_next_write(world):
