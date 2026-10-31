@@ -1,7 +1,7 @@
 import { el } from './dom.js';
 import { request, post } from './data.js';
 
-export async function sessionTools(session, view, navigate, focusRecall = false) {
+export async function sessionTools(session, view, navigate) {
   const root = el('section', '', 'session-tools');
   if (session.sku_pin === 'kera' && session.channel !== 'video') {
     const dates = el('div', '', 'date-bar');
@@ -24,13 +24,12 @@ export async function sessionTools(session, view, navigate, focusRecall = false)
       finally { recall.disabled = Boolean(session.public_mode); }
     };
     dates.append(recall); root.append(dates);
-    if (focusRecall) requestAnimationFrame(() => recall.focus());
   }
   const label = el('label', 'Search this session');
   const input = el('input'); input.type = 'search'; input.placeholder = 'Search · diacritics optional';
   label.append(input);
   const results = el('div', '', 'search-results'), status = el('p', '', 'muted');
-  let hits = [], index = -1, query = '';
+  let hits = [], index = -1;
   function jump(next) {
     if (!hits.length) return;
     index = (next + hits.length) % hits.length;
@@ -41,7 +40,7 @@ export async function sessionTools(session, view, navigate, focusRecall = false)
     if (!['Enter', 'ArrowDown', 'ArrowUp'].includes(event.key)) return;
     event.preventDefault();
     if (event.key === 'Enter') {
-      query = input.value.trim();
+      const query = input.value.trim();
       if (!query) { hits = []; results.replaceChildren(); return; }
       try {
         const rows = await request(`/api/search?q=${encodeURIComponent(query)}&session_id=${encodeURIComponent(session.session_id)}`);

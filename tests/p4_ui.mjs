@@ -53,6 +53,17 @@ assert.equal(turns.children[1]['aria-pressed'], 'true'); assert.equal(turns.chil
 assert.match(tools.textContent, /Speaker unknown/);
 await input.onkeydown(key('ArrowDown')); assert.equal(turns.children[0]['aria-pressed'], 'true');
 await input.onkeydown(key('ArrowUp')); assert.equal(turns.children[1]['aria-pressed'], 'true');
+const originalFetch = globalThis.fetch, pending = {};
+globalThis.fetch = url => new Promise(resolve => { pending[url.includes('q=old') ? 'old' : 'new'] = resolve; });
+input.value = 'old'; const oldSearch = input.onkeydown(key('Enter'));
+input.value = 'new'; const newSearch = input.onkeydown(key('Enter'));
+pending.new({ ok: true, json: async () => [{ turn_id: 't01', display_speaker: 'Speaker unknown', snippet: 'new result' }] });
+await newSearch;
+pending.old({ ok: true, json: async () => [{ turn_id: 't02', display_speaker: 'Speaker unknown', snippet: 'old result' }] });
+await oldSearch;
+assert.equal(turns.children[0]['aria-pressed'], 'true');
+assert.doesNotMatch(tools.textContent, /old result/);
+globalThis.fetch = originalFetch;
 view.event({ type: 'recall.applied', payload: { sessions: [{ session_id: 'synthetic', flagged_atoms: 2 }] } });
 assert.match(view.node.textContent, /2 flagged atoms · No human needed/);
 

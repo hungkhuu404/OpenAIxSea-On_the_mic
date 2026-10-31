@@ -18,7 +18,7 @@ export async function sessionScreen(root, id, translations = {}, { publicMode = 
     const view = sessionView(session, translations, session.events || []);
     const tools = await sessionTools(session, view, target => show(target).catch(error => {
       tools.append(el('p', error.message, 'notice'));
-    }), focusRecall);
+    }));
     if (disposed || current !== revision) return;
     stop(); container.replaceChildren(tools, view.node);
     if (initialTurn) view.selectTurn(initialTurn);
