@@ -59,7 +59,7 @@ def ranked_queue():
                 parts.append({"text": f"near hit: {anchor} '{hit.pattern}' (gap: '{gap}')", "score": 4 if i == 0 else 0})
             ids = [key] + [r["item_id"] for r in memory if (r.get("session_id"), r.get("atom_id")) == (session.session_id, atom.atom_id)]
             result.append({"atom_key": key, "atom": atom.model_dump(mode="json"), "verdict": verdict.model_dump(mode="json"),
-                           "sku_id": session.sku_pin, "cluster_key": f"{session.sku_pin}:{verdict.reason_code}:{atom.axis}",
+                           "sku_id": session.sku_pin, "cluster_key": verdict.reason_code,
                            "source": session.source, "source_line": next(t.text for t in session.turns if t.turn_id == atom.turn_id),
                            "chips": parts, "score": sum(p["score"] for p in parts), "score_max": sum(g[1] for g in groups) + 6 + 2 + 4, "draft_state": draft_state(ids, jobs, files)})
     return sorted(result, key=lambda r: (-r["score"], r["atom_key"]))

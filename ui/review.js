@@ -6,14 +6,20 @@ export const clock = value => value ? new Date(value).toLocaleTimeString('en-GB'
 export const draftTitle = status => ({ failed: 'Draft failed', error: 'Draft error', queued: 'Drafting', running: 'Drafting', passed: 'Draft passed' }[status] || 'No draft run');
 
 export function queueGroups(items) {
+  const keys = item => [...new Set(item.atom.near_hits.map(h => `${item.cluster_key}:${h.law_anchor}:${h.pattern}`))].sort();
   const buckets = new Map();
-  for (const item of items) {
-    const pattern = item.atom.near_hits.map(h => `${h.law_anchor}:${h.pattern}`).sort().join('|');
-    const key = pattern ? `${item.cluster_key}:${pattern}` : item.atom_key;
+  for (const item of items) for (const key of keys(item)) {
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key).push(item);
   }
-  return [...buckets.values()].flatMap(group => group.length >= 3 ? [group] : group.map(item => [item]));
+  const used = new Set(), groups = [];
+  for (const item of items) {
+    if (used.has(item.atom_key)) continue;
+    const group = keys(item).map(key => buckets.get(key).filter(member => !used.has(member.atom_key))).find(members => members.length >= 3) || [item];
+    groups.push(group);
+    for (const member of group) used.add(member.atom_key);
+  }
+  return groups;
 }
 
 function button(text, action) {

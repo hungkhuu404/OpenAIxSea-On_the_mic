@@ -263,3 +263,27 @@ def test_newest_draft_and_original_gap_text(client):
     assert item["draft_state"] == "Draft failed"
     assert "gap: 'CÁC'" in item["chips"][0]["text"]
     assert item["atom"]["span"] == hit.span
+
+
+
+def test_real_record_only_label(client, monkeypatch):
+    import importlib
+    try:
+        labels = importlib.import_module("loop.labels")
+    except ModuleNotFoundError as exc:
+        if exc.name != "loop.labels":
+            raise
+        pytest.skip("not ready: loop.labels")
+    config.set_override("REGRESSION_AUTOCOMMIT", 0)
+    session = make_session("record-only", "Một câu chưa rõ").model_copy(update={"sku_pin": "demo_sku"})
+    ledger.add_session(session)
+    ledger.add_atoms(session.session_id, [make_atom(session.turns[0].text, start=0)])
+    ledger.append_verdicts([Verdict.model_validate(make_verdict().model_dump() | {"atom_key": "record-only:t01.a1"})])
+    response = client.post("/api/labels", json=dict(target="record-only:t01.a1", label="red", rule_id="R04", labeler="operator", auto_trigger=False))
+    assert response.status_code == 200
+    assert response.json()["session_id"] == "record-only"
+    assert ledger.list_jobs() == []
+    assert ledger.list_labels()[0]["labeler"] == "operator"
+    assert client.get("/api/queue").json() == []
+    assert ledger.effective_verdicts(session.session_id)[0].verdict == "abstain"
+    assert client.post("/api/labels", json=dict(target="unknown:a", label="red", labeler="operator", auto_trigger=False)).status_code == 400

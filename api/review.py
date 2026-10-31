@@ -47,7 +47,10 @@ async def work(module, function, *args):
             if exc.name == module:
                 raise DependencyNotReady(module) from exc
             raise
-        return dependency.__dict__[function](*args)
+        try:
+            return dependency.__dict__[function](*args)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
     return await asyncio.to_thread(call)
 
 
@@ -62,10 +65,15 @@ def portable_attempts(runs, meta_attempts):
     """Keep every run, enriching only matching metadata without inventing times."""
     remaining = list(meta_attempts)
     attempts = []
-    for run in sorted(runs, key=lambda r: datetime.fromisoformat(r["started"])):
+    ordered = sorted(runs, key=lambda r: datetime.fromisoformat(r["started"]))
+    for index, run in enumerate(ordered):
+        start = datetime.fromisoformat(run["started"])
+        end = datetime.fromisoformat(ordered[index + 1]["started"]) if index + 1 < len(ordered) else None
         for attempt in run["attempts"]:
             match = next((a for a in remaining if a["gate_result"] == attempt["gate_result"]
-                          and a["error_lines"] == attempt["error_lines"]), None)
+                          and a["error_lines"] == attempt["error_lines"]
+                          and datetime.fromisoformat(a["ts"]) >= start
+                          and (end is None or datetime.fromisoformat(a["ts"]) < end)), None)
             if match is not None:
                 remaining.remove(match)
             attempts.append((match or {}) | attempt | {"job_id": run["job_id"], "run_started": run["started"]})
@@ -137,7 +145,8 @@ async def rule(id: str):
         raise HTTPException(404, "Rule not found")
     files = clusters()
     related = [c for c in files if any(r["rule_id"] == id for r in c["runs"])]
-    runs = [r for c in related for r in c["runs"] if r["rule_id"] == id]
+    runs = sorted((r for c in related for r in c["runs"] if r["rule_id"] == id),
+                  key=lambda r: datetime.fromisoformat(r["started"]))
     local = ledger.list_jobs(rule_id=id)
     data["jobs"] = []
     for stored in local:

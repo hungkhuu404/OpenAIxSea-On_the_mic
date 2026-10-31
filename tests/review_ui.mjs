@@ -19,6 +19,8 @@ const item = (id, pattern = 'phòng … bệnh') => ({ atom_key: id, cluster_key
 assert.equal(queueGroups([item('a'), item('b')]).length, 2);
 assert.equal(queueGroups([item('a'), item('b'), item('c')]).length, 1);
 assert.equal(queueGroups([item('a'), item('b'), item('c', 'chữa … bệnh')]).length, 3);
+const overlap = item('overlap'); overlap.atom.near_hits.push({ pattern: 'chữa … bệnh', law_anchor: 'LDUOC-2016/D6/K15' });
+assert.equal(queueGroups([overlap, item('b'), item('c')]).length, 1);
 assert.equal(draftTitle('error'), 'Draft error');
 const meta = { origin: 't5', approved_by: null, attempts: [], anchors: ['LDUOC-2016/D6/K15'] };
 const job = { job_id: 'fake-job', status: 'passed', dry: true, config: 'abc', rule_id: 'R04_DEMO', cluster_item_ids: ['a'], attempts: [{ started: '2026-10-21T09:00:00Z', gate_result: 'pass', error_lines: ['synthetic error'], files_read: ['rules/R04_DEMO.py'] }] };
