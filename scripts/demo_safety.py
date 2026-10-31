@@ -102,7 +102,23 @@ def alive(pid):
 
 
 def stop_command(pid):
-    return f'taskkill /PID {pid} /T /F' if os.name == 'nt' else f'kill -TERM -- -{pid}'
+    if os.name == 'nt':
+        return f'taskkill /PID {pid} /T /F'
+    if os.getpgid(pid) == pid:
+        return f'kill -TERM -- -{pid}'
+    return 'kill -TERM ' + ' '.join(str(child) for child in descendants(pid) + [pid])
+
+
+def descendants(pid):
+    # Query only children of a recorded PID, never process names or other jobs.
+    result = subprocess.run(['pgrep', '-P', str(pid)], capture_output=True, text=True, check=False)
+    if result.returncode not in (0, 1):
+        raise ValueError('Cannot inspect recorded process tree')
+    children = []
+    for value in result.stdout.split():
+        child = int(value)
+        children.extend(descendants(child)); children.append(child)
+    return children
 
 
 def jobs():
@@ -121,15 +137,25 @@ def jobs():
 def stop_jobs():
     import ledger
     for file, pid in jobs():
+        targets = [pid]
         if os.name == 'nt':
             subprocess.run(['taskkill', '/PID', str(pid), '/T', '/F'], check=True, capture_output=True)
         else:
-            if os.getpgid(pid) != pid:
-                raise ValueError('Recorded job is not a process-group leader; stop it manually')
-            os.killpg(pid, signal.SIGTERM)
+            targets = descendants(pid) + [pid]
+            if os.getpgid(pid) == pid:
+                os.killpg(pid, signal.SIGTERM)
+            else:
+                for target in targets:
+                    try: os.kill(target, signal.SIGTERM)
+                    except ProcessLookupError: pass
         deadline = time.monotonic() + 5
-        while alive(pid) and time.monotonic() < deadline:
+        while any(alive(target) for target in targets) and time.monotonic() < deadline:
             time.sleep(.05)
+        if os.name != 'nt':
+            for target in targets:
+                if alive(target):
+                    try: os.kill(target, signal.SIGKILL)
+                    except ProcessLookupError: pass
         if alive(pid):
             raise ValueError('Job did not stop: ' + stop_command(pid))
         job = ledger.get_job(file.stem) if paths.ledger_db().exists() else None

@@ -98,11 +98,12 @@ def test_restore_guards_and_config(world, monkeypatch, capsys):
         demo.restore('saved', free_port())
 
 
-def test_recorded_process_is_the_only_one_stopped(world):
+@pytest.mark.parametrize('new_group', [False, True])
+def test_recorded_process_is_the_only_one_stopped(world, new_group):
     from tests.test_ledger_read import job
     ledger.create_job(job('synthetic'))
     demo.snapshot('saved')
-    children = [subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=os.name != 'nt') for _ in range(2)]
+    children = [subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=new_group and os.name != 'nt') for _ in range(2)]
     try:
         file = paths.jobs_dir(create=True) / 'synthetic.pid'
         file.write_text(str(children[0].pid), encoding='utf-8')
