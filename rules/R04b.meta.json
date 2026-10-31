@@ -1,0 +1,68 @@
+{
+  "id": "R04b",
+  "family": "R04",
+  "origin": "t5",
+  "article_id": "LDUOC-2016/D6/K15",
+  "anchors": [
+    "LDUOC-2016/D6/K15"
+  ],
+  "law_span": "phòng bệnh",
+  "source_case_ids": [
+    "b125bef2c9a34c00964a8256f582785e",
+    "edeb9cb00d004416b6bec2564a956f4a",
+    "df46887112dc428ebdfc40dc0503584c"
+  ],
+  "trigger": "Match whole-syllable ngăn ngừa followed by bệnh with at most two intervening syllables within a clause, preserving disclaimer and negation exclusions.",
+  "precedence": 4,
+  "attempts": [
+    {
+      "ts": "2026-10-31T07:57:25.199904+00:00",
+      "gate_result": "fail",
+      "error_lines": [
+        "R04b check 7: Log line 26: forbidden path: class AtomView",
+        "R04b check 7: Log line 27: forbidden path: class AtomView",
+        "R04b: behaviour blocked by failed checks 7"
+      ],
+      "files_read": [
+        ".agents/skills/draft-rule/SKILL.md",
+        "class AtomView",
+        "loop_input/article.md",
+        "loop_input/collisions.txt",
+        "loop_input/disclaimer.txt",
+        "loop_input/permitted_items.json",
+        "loop_input/schema.json",
+        "loop_input/sources.json",
+        "loop_input/task.json",
+        "rules/_common.py",
+        "rules/R04.py",
+        "rules/R04b.meta.json",
+        "rules/R04b.py",
+        "tests/test_R04b.py",
+        "textnorm/__init__.py"
+      ]
+    },
+    {
+      "ts": "2026-10-31T07:57:48.988284+00:00",
+      "gate_result": "pass",
+      "error_lines": [],
+      "files_read": [
+        ".agents/skills/draft-rule/SKILL.md",
+        "loop_input/article.md",
+        "loop_input/collisions.txt",
+        "loop_input/permitted_items.json",
+        "loop_input/retry.md",
+        "loop_input/schema.json",
+        "loop_input/sources.json",
+        "loop_input/task.json",
+        "rules/_common.py",
+        "rules/R04b.meta.json",
+        "rules/R04b.py",
+        "tests/test_R04b.py"
+      ]
+    }
+  ],
+  "revealed_case_ids": [],
+  "approved_by": null,
+  "approved_at": null,
+  "status": "proposed"
+}
