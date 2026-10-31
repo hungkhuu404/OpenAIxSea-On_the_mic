@@ -17,7 +17,7 @@ class RuleInfo:
     meta: object
 
 
-def _discover(directory):
+def _metadata(directory):
     from core.models import RuleMeta
 
     metadata = {}
@@ -26,9 +26,20 @@ def _discover(directory):
         if meta.id in metadata:
             raise ValueError(f"Duplicate metadata id: {meta.id}")
         metadata[meta.id] = meta
+    return metadata
+
+
+def _discover(directory, selected=None, *, metadata=None):
+    metadata = _metadata(directory) if metadata is None else metadata
     rules = {}
+    seen = set()
     for path in sorted(directory.glob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except SyntaxError:
+            if selected is None or path.stem in selected:
+                raise
+            continue
         ids = [node.value.value for node in tree.body
                if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
                and any(isinstance(target, ast.Name) and target.id == "RULE_ID"
@@ -36,8 +47,11 @@ def _discover(directory):
         if not ids:
             continue
         rule_id, = ids
-        if rule_id not in metadata or rule_id in rules:
+        if rule_id not in metadata or rule_id in seen:
             raise ValueError(f"Duplicate or mismatched rule id: {rule_id}")
+        seen.add(rule_id)
+        if selected is not None and rule_id not in selected:
+            continue
         meta = metadata[rule_id]
         location = hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()[:16]
         spec = importlib.util.spec_from_file_location(f"rules._loaded_{path.stem}_{location}", path)
@@ -90,19 +104,29 @@ def load_pack(rule_ids, quarantined=(), mode="live", candidate_dir=None):
     active_ids, quarantined_ids = tuple(rule_ids), tuple(quarantined)
     if len(set(active_ids + quarantined_ids)) != len(active_ids + quarantined_ids):
         raise ValueError("Duplicate or overlapping pack ids")
-    discovered = {rule.rule_id: rule for rule in all_rules()}
+    directory = Path(__file__).parent
+    main_metadata = _metadata(directory)
+    metadata = dict(main_metadata)
+    candidate_ids = set()
     if candidate_dir is not None:
-        candidates = _discover(Path(candidate_dir) / "rules")
+        candidate_directory = Path(candidate_dir) / "rules"
+        candidates = _metadata(candidate_directory)
         selected = [rule_id for rule_id in active_ids if rule_id in candidates
-                    and (rule_id not in discovered or candidates[rule_id].meta.approved_by is None)]
+                    and (rule_id not in metadata or candidates[rule_id].approved_by is None)]
         if len(selected) != 1:
             raise ValueError("Measure mode requires exactly one selected candidate")
-        discovered[selected[0]] = candidates[selected[0]]
-    selected_rules = [discovered[rule_id] for rule_id in active_ids + quarantined_ids]
-    unapproved = [rule for rule in selected_rules if rule.meta.approved_by is None]
+        candidate_ids = set(selected)
+        metadata[selected[0]] = candidates[selected[0]]
+    selected_meta = [metadata[rule_id] for rule_id in active_ids + quarantined_ids]
+    unapproved = [meta for meta in selected_meta if meta.approved_by is None]
     if (mode == "live" and unapproved) or len(unapproved) > 1:
         raise ValueError("Live rules require approval; measure mode permits one unapproved rule")
-    active = tuple(discovered[rule_id] for rule_id in active_ids
-                   if discovered[rule_id].meta.status == "active"
-                   or (mode == "measure" and discovered[rule_id].meta.status == "proposed"))
+    active_ids = tuple(rule_id for rule_id in active_ids
+                       if metadata[rule_id].status == "active"
+                       or (mode == "measure" and metadata[rule_id].status == "proposed"))
+    needed = set(active_ids + quarantined_ids)
+    discovered = _discover(directory, needed - candidate_ids, metadata=main_metadata)
+    if candidate_dir is not None:
+        discovered.update(_discover(candidate_directory, needed & candidate_ids, metadata=candidates))
+    active = tuple(discovered[rule_id] for rule_id in active_ids)
     return RuntimePack(active, tuple(discovered[rule_id] for rule_id in quarantined_ids), mode)

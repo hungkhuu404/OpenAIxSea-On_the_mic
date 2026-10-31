@@ -34,7 +34,7 @@ def temporary_rules(tmp_path, monkeypatch):
         meta = dict(base, id=rule_id, status="active" if approved else "proposed", approved_by=approved)
         (directory / f"{rule_id}.py").write_text(source.replace('"R04x"', f'"{rule_id}"'), encoding="utf-8")
         (directory / f"{rule_id}.meta.json").write_text(json.dumps(meta), encoding="utf-8")
-    monkeypatch.setattr(registry, "all_rules", lambda: list(registry._discover(directory).values()))
+    monkeypatch.setattr(registry, "__file__", str(directory / "registry.py"))
     return directory
 
 
