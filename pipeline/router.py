@@ -94,6 +94,58 @@ def _condition(atom, ctx, items):
     return None
 
 
+def code_inputs(atom, ctx, turn_text):
+    """Prepare the shared source view, near hits and dossier axis slice."""
+    key = match_key(atom.span)[0]
+    view = AtomView(text=atom.span, key=key, axis=atom.axis,
+                    speaker_role=atom.speaker_role, role_span=atom.role_span,
+                    category_norm=ctx.category_norm, as_of=ctx.as_of,
+                    turn_text=turn_text)
+    nearhit = _optional_module("rules.nearhit")
+    atom.near_hits = [] if nearhit is None else nearhit.detect(view)
+    groups = axis_groups(atom.axis)
+    return view, groups, [item for item in ctx.P if item.axis_group in groups]
+
+
+def step_a(key, items):
+    """Return an allow-list decision, or continue to the rule step."""
+    permitted_id = _allow_item(key, items)
+    return (VerdictDraft("green", "allow_list", family="STANDARD", permitted_id=permitted_id)
+            if permitted_id is not None else None)
+
+
+def step_b(view, pack, resolve_negation):
+    """Apply code rules; the caller supplies the narrow negation policy."""
+    hits = []
+    uncertain = False
+    for hit in pack.check_atom(view):
+        if not hit.ambiguous_negation:
+            hits.append(hit)
+        else:
+            answer = resolve_negation()
+            if answer == "not_negated":
+                hits.append(hit)
+            elif answer == "unsure":
+                uncertain = True
+    if uncertain:
+        return _abstain("RULE_AMBIGUOUS")
+    if hits:
+        hits.sort(key=lambda hit: (hit.precedence, hit.rule_id))
+        deciding = hits[0]
+        return VerdictDraft("red", f"rule:{deciding.rule_id}", family=deciding.family,
+                            fired_rules=list(dict.fromkeys(hit.rule_id for hit in hits)),
+                            evidence_span=deciding.matched)
+    if pack.quarantined_hits(view):
+        return _abstain("RULE_QUARANTINED", flags=["PREV_RED"])
+    return None
+
+
+def step_d(atom, ctx, items):
+    """Return a deterministic precondition refusal, or continue to step E."""
+    reason = _condition(atom, ctx, items)
+    return _abstain(reason) if reason is not None else None
+
+
 def _negq(span, turn_text, purpose, cache_read=True):
     from pipeline import llm
 
@@ -146,15 +198,8 @@ def _route_atom(atom, ctx, pack, purpose, emit=None, *, session_id,
                               atom_id=atom.atom_id, step=step, outcome=outcome,
                               ms=(monotonic() - started) * 1000))
 
-    key = match_key(atom.span)[0]
-    view = AtomView(text=atom.span, key=key, axis=atom.axis,
-                    speaker_role=atom.speaker_role, role_span=atom.role_span,
-                    category_norm=ctx.category_norm, as_of=ctx.as_of,
-                    turn_text=turn_text)
-    nearhit = _optional_module("rules.nearhit")
-    atom.near_hits = [] if nearhit is None else nearhit.detect(view)
-    groups = axis_groups(atom.axis)
-    items = [item for item in ctx.P if item.axis_group in groups]
+    view, groups, items = code_inputs(atom, ctx, turn_text)
+    key = view.key
     negation_result = None
     negq_miss = 0
     call_ids = []
@@ -169,34 +214,12 @@ def _route_atom(atom, ctx, pack, purpose, emit=None, *, session_id,
         return negation_result
 
     started = monotonic()
-    permitted_id = _allow_item(key, items)
-    draft = (VerdictDraft("green", "allow_list", family="STANDARD", permitted_id=permitted_id)
-             if permitted_id is not None else None)
+    draft = step_a(key, items)
     event("A", "green" if draft else "continue", started)
 
     started = monotonic()
     if draft is None:
-        hits = []
-        uncertain = False
-        for hit in pack.check_atom(view):
-            if not hit.ambiguous_negation:
-                hits.append(hit)
-            else:
-                answer = negation()
-                if answer == "not_negated":
-                    hits.append(hit)
-                elif answer == "unsure":
-                    uncertain = True
-        if uncertain:
-            draft = _abstain("RULE_AMBIGUOUS")
-        elif hits:
-            hits.sort(key=lambda hit: (hit.precedence, hit.rule_id))
-            deciding = hits[0]
-            draft = VerdictDraft("red", f"rule:{deciding.rule_id}", family=deciding.family,
-                          fired_rules=list(dict.fromkeys(hit.rule_id for hit in hits)),
-                          evidence_span=deciding.matched)
-        elif pack.quarantined_hits(view):
-            draft = _abstain("RULE_QUARANTINED", flags=["PREV_RED"])
+        draft = step_b(view, pack, negation)
         event("B", draft.decided_by if draft else "continue", started)
     else:
         event("B", "skipped", started)
@@ -204,10 +227,8 @@ def _route_atom(atom, ctx, pack, purpose, emit=None, *, session_id,
     event("C", "skipped", monotonic())
     started = monotonic()
     if draft is None:
-        reason = _condition(atom, ctx, items)
-        if reason is not None:
-            draft = _abstain(reason)
-        event("D", reason or "continue", started)
+        draft = step_d(atom, ctx, items)
+        event("D", draft.reason_code if draft is not None else "continue", started)
     else:
         event("D", "skipped", started)
 
