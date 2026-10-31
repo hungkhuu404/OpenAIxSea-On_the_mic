@@ -12,7 +12,7 @@ import pytest
 
 from core import paths
 from core.config import set_override
-from core.models import GateCheck, GateResult, Job
+from core.models import ClusterFile, ClusterRun, GateCheck, GateResult, Job, RuleMeta
 from loop import cli, draft
 
 
@@ -129,7 +129,35 @@ def test_block_examples_pass_or_fail_the_real_logscan(tmp_path):
         assert len(errors) == (0 if passing else 1), (command, errors)
 
 
-def test_retry_pid_command_sparse_checkout_and_provenance(world):
+@pytest.mark.parametrize("launcher", [False, True], ids=["direct", "launcher"])
+def test_retry_pid_command_sparse_checkout_and_provenance(world, monkeypatch, launcher):
+    import ledger
+
+    if launcher:
+        script = world["base"].parent / "launcher with spaces.py"
+        shutil.copyfile(ROOT / "tests/loop_fixtures/fake_codex_launcher.py", script)
+        worker = world["base"].parent / "fake tool with spaces.py"
+        set_override("CODEX_CMD", f'"{sys.executable}" "{script}" "{worker}"')
+    original = subprocess.Popen
+    managed = []
+
+    def popen(args, *positional, **kwargs):
+        process = original(args, *positional, **kwargs)
+        if "--sandbox" in args:
+            managed.append(process)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    original_execute = draft._execute
+
+    def execute(job, worktree, number, log_dir):
+        try:
+            return original_execute(job, worktree, number, log_dir)
+        finally:
+            assert ledger.get_job(job.job_id).pid is None
+            assert not (paths.jobs_dir() / f"{job.job_id}.pid").exists()
+
+    monkeypatch.setattr(draft, "_execute", execute)
     result = job(world)
     assert result.status == "passed", result.attempts
     assert len(result.attempts) == 2 and result.pid is None and not result.dry
@@ -139,7 +167,13 @@ def test_retry_pid_command_sparse_checkout_and_provenance(world):
     second = json.loads((world["capture"] / "job1-2.json").read_text(encoding="utf-8"))
     assert first["prompt"] == draft.ALLOWED_COMMANDS + "\n\n" + draft.FOLLOW
     assert second["retry"] == draft.ALLOWED_COMMANDS + "\n\nGate errors from the previous attempt:\n" + result.attempts[0].error_lines[0] + "\n"
-    assert first["pid"] == first["job_pid"] == int(first["pidfile"])
+    assert len(managed) == 2
+    for record, process in zip((first, second), managed, strict=True):
+        assert record["job_pid"] == int(record["pidfile"]) == process.pid
+        assert record["worker_pid"] > 0
+        assert process.poll() == 0
+        if launcher:
+            assert record["worker_pid"] != process.pid
     args = first["args"]
     assert args[:4] == ["exec", "--sandbox", "workspace-write", "--json"]
     assert args[-1] == "-" and f"model_reasoning_effort=low" in args
@@ -247,9 +281,26 @@ def test_repeat_with_real_allocator_opens_only_one_fake_pr(world, monkeypatch):
     assert all(row.status == "passed" for row in jobs)
     assert len(pushes) == len(prs) == 1
     assert jobs[0].pr_url and jobs[1].pr_url is None
+    restored = ClusterFile.model_validate_json(world["path"].read_text(encoding="utf-8"))
+    assert len(restored.runs) == 2
+    assert all(isinstance(run, ClusterRun) for run in restored.runs)
+    assert [run.result for run in restored.runs] == ["passed", "passed"]
     expected = dict(K=2, I=2, J=0, R=0)
     ledger.init_db(world["base"] / ".local/fresh.db")
     assert draft.funnel(world["digest"]) == expected
+
+
+def test_suffixed_rule_uses_registered_metadata_family(world, monkeypatch):
+    from rules import registry
+
+    meta = RuleMeta(id="R04b", family="R04", origin="t5", article_id="LDUOC-2016/D6",
+        anchors=["LDUOC-2016/D6/K15"], law_span="chữa bệnh", trigger="Synthetic family mapping.",
+        precedence=14, status="proposed")
+    info = registry.RuleInfo("R04b", ModuleType("synthetic_rule"), meta)
+    monkeypatch.setattr(registry, "all_rules", lambda: [info])
+    correction = world["source"] | dict(rule_ids=["R04b"])
+    assert draft._family([correction]) == "R04"
+    assert draft._family([correction, world["source"]]) == "R04"
 
 
 def test_default_never_pushes_or_calls_gh(world, monkeypatch):
@@ -303,6 +354,53 @@ def test_execution_errors_are_recorded_and_nonzero_gate_pass_retries(world, monk
     events = ledger.events_since(0)
     assert sum(row.type == "job.attempt" for row in events) == len(result.attempts)
     assert events[-1].type == "job.finished" and events[-1].payload["status"] == result.status
+
+
+@pytest.mark.parametrize("needs_kill", [False, True], ids=["terminate", "kill-after-wait-timeout"])
+def test_attempt_exception_reaps_managed_process_and_clears_pid(world, monkeypatch, needs_kill):
+    import ledger
+
+    original = subprocess.Popen
+    calls = []
+
+    class Process:
+        pid = 87654
+        returncode = None
+
+        def communicate(self, prompt):
+            assert ledger.get_job("job1").pid == self.pid
+            assert int((paths.jobs_dir() / "job1.pid").read_text(encoding="utf-8")) == self.pid
+            assert prompt == draft.ALLOWED_COMMANDS + "\n\n" + draft.FOLLOW
+            raise subprocess.TimeoutExpired("synthetic worker", 1)
+
+        def terminate(self):
+            calls.append("terminate")
+
+        def wait(self, timeout=None):
+            calls.append(("wait", timeout))
+            if needs_kill and timeout is not None:
+                raise subprocess.TimeoutExpired("synthetic managed process", timeout)
+            self.returncode = 1
+            return self.returncode
+
+        def kill(self):
+            calls.append("kill")
+
+    process = Process()
+
+    def popen(args, *positional, **kwargs):
+        if "--sandbox" in args:
+            return process
+        return original(args, *positional, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    result = job(world)
+    assert result.status == "error" and len(result.attempts) == 1
+    assert "timed out" in result.attempts[0].error_lines[0]
+    assert calls == (["terminate", ("wait", 5), "kill", ("wait", None)] if needs_kill
+                     else ["terminate", ("wait", 5)])
+    assert process.returncode == 1
+    assert result.pid is None and not (paths.jobs_dir() / "job1.pid").exists()
 
 
 def test_cluster_autocommit_records_previous_commit_on_next_write(world):

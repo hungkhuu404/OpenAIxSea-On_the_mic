@@ -27,7 +27,7 @@ prompt = sys.stdin.read()
 with sqlite3.connect(os.environ["DRAFT_TEST_LEDGER"]) as conn:
     job = json.loads(conn.execute("SELECT data FROM jobs WHERE job_id=?", (root.name,)).fetchone()[0])
 pidfile = Path(os.environ["DRAFT_TEST_JOBS"]) / f"{root.name}.pid"
-record = dict(args=sys.argv[1:], prompt=prompt, pid=os.getpid(), job_pid=job["pid"],
+record = dict(args=sys.argv[1:], prompt=prompt, worker_pid=os.getpid(), job_pid=job["pid"],
               pidfile=pidfile.read_text(encoding="utf-8"), cwd=str(root),
               retry=(root / "loop_input/retry.md").read_text(encoding="utf-8") if number > 1 else None)
 (capture / f"{root.name}-{number}.json").write_text(json.dumps(record), encoding="utf-8")
