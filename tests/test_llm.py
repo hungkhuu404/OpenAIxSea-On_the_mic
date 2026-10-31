@@ -2,6 +2,7 @@
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -112,6 +113,49 @@ def test_offline_hit_and_fresh_does_not_overwrite(boundary):
     set_override("OFFLINE", 1)
     assert llm.call(**request()).cache_hit
     assert len(calls) == 2 and len(records) == 3
+
+
+@pytest.mark.parametrize("purpose", ["live", "shadow"])
+def test_malformed_cached_response_is_schema_error_without_promotion(boundary, monkeypatch, purpose):
+    root, calls, records = boundary
+    args = request()
+    payload = {name: args[name] for name in ("model", "effort", "schema_name", "messages")}
+    payload.update(backend="codex", schema=llm._schema(args["schema_name"]))
+    sha = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":")).encode("utf-8")).hexdigest()
+    first = llm.call(**args)
+    assert first.request_sha256 == sha
+    location = llm.cache_path(root / ".local" / "cache", sha)
+    row = json.loads(location.read_text(encoding="utf-8"))
+    row["response"] = {}
+    location.write_text(json.dumps(row), encoding="utf-8")
+    before = {path: path.read_bytes() for path in rows(root)}
+    set_override("OFFLINE", 1)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Malformed cache response must not invoke the backend")
+
+    monkeypatch.setattr(llm, "_backend", forbidden)
+    with llm.observe_results() as observed:
+        result = llm.call(**request(purpose=purpose))
+    assert observed == [result]
+    assert result.cache_hit and result.request_sha256 == sha
+    assert result.response is None and result.error.kind == "schema"
+    assert "required property" in result.error.detail
+    assert result.latency_ms >= 0 and len(calls) == 1
+    assert {path: path.read_bytes() for path in rows(root)} == before
+    assert not llm.cache_path(paths.CACHE_DIR, sha).exists()
+    if purpose == "live":
+        assert len(records) == 2
+        logged = records[-1].model_dump(mode="json")
+    else:
+        assert len(records) == 1
+        lines = (root / ".local" / "llm_calls.jsonl").read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1
+        logged = json.loads(lines[0])
+    assert logged["request_sha256"] == sha and logged["purpose"] == purpose
+    assert logged["response"] is None and logged["error"]["kind"] == "schema"
+    assert logged["latency_ms"] == result.latency_ms
 
 
 def test_scope_is_thread_local_and_preserves_environment(boundary):
