@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import date
 import sqlite3
 import sys
@@ -14,10 +15,10 @@ import ledger
 from core import paths
 from core.config import settings
 from core.enums import AtomFlag
-from core.models import Atom, Session, Turn
+from core.models import Atom, RuleHit, Session, Turn
 from pipeline import llm, runner
 from pipeline.drafts import VerdictDraft
-from rules.registry import load_pack
+from rules.registry import RuntimePack, load_pack
 
 
 def session(session_id="sqlite-fixture", text="alpha beta gamma"):
@@ -119,6 +120,37 @@ def test_process_reprocess_real_sqlite_preserves_history_and_search(integrated):
     assert updated.verdicts[0].supersedes == first.verdicts[0].verdict_id
     assert not [row for row in ledger.search("alpha") if row["kind"] == "atom"]
     assert [row["snippet"] for row in ledger.search("gamma") if row["kind"] == "atom"] == ["gamma"]
+
+
+@pytest.mark.parametrize("matched,expected", [
+    ("FABRICATED QUOTE", None), ("alpha", "alpha"), ("", ""),
+], ids=["outside-atom", "inside-atom", "empty"])
+def test_red_rule_evidence_span_is_source_bound_in_sqlite(integrated, monkeypatch, matched, expected):
+    r04, = load_pack(["R04"], mode="live").active
+    hit = RuleHit(rule_id="R04", family="R04", matched=matched,
+                  law_anchor=r04.meta.anchors[0], law_span=r04.meta.law_span,
+                  precedence=r04.meta.precedence, ambiguous_negation=False)
+    synthetic = replace(r04, module=SimpleNamespace(check=lambda view: [hit]))
+    pack = RuntimePack(active=(synthetic,), quarantined=(), mode="live")
+    version = ledger.current_pack().version
+    monkeypatch.setattr(runner, "_live_pack", lambda: (pack, version))
+
+    original = ledger.add_session(session())
+    result = runner.process_session(original.session_id, "live")
+    stored = ledger.get_session(original.session_id)
+    verdict, = stored.verdicts
+    atom, = stored.atoms
+    assert result.verdicts == stored.verdicts
+    assert verdict.verdict == result.case_verdict == "red"
+    assert verdict.decided_by == result.case_decided_by == "rule:R04"
+    assert verdict.fired_rules == ["R04"]
+    assert verdict.legal_basis == ["LDUOC-2016/D6/K15"]
+    assert verdict.law_span == r04.meta.law_span
+    assert verdict.evidence_span == expected
+    assert atom.span == "alpha beta gamma"
+    if verdict.evidence_span:
+        assert verdict.evidence_span in atom.span
+        assert verdict.evidence_span in original.turns[0].text
 
 
 @pytest.mark.parametrize("operation", ["replay", "reprocess"])

@@ -134,7 +134,7 @@ def step_b(view, pack, resolve_negation):
         deciding = hits[0]
         return VerdictDraft("red", f"rule:{deciding.rule_id}", family=deciding.family,
                             fired_rules=list(dict.fromkeys(hit.rule_id for hit in hits)),
-                            evidence_span=deciding.matched)
+                            evidence_span=deciding.matched if deciding.matched in view.text else None)
     if pack.quarantined_hits(view):
         return _abstain("RULE_QUARANTINED", flags=["PREV_RED"])
     return None
