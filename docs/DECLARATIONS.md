@@ -55,11 +55,11 @@ The UI bundles WOFF2 files for these font families, each with its licence in `ui
 
 The data includes press quotations, quotations reported from court proceedings and official records. Their sources and confidence levels are recorded in [the case source register](../data/cases/SOURCES.md), [the Kera source register](../data/demo/kera/SOURCES.md), [the law source register](../data/law/SOURCES.md) and [the registry source register](../data/registry/SOURCES.md). Public speaker references use role labels such as `[KOL 1]`, `[KOL 2]` and `[KOL 3]`; constructed reenactment lines are identified as constructed.
 
-A news clip is shown only from the presenting laptop and is never included in the repository. [Local presentation contract](contracts.md#12-presenter-assets-local-only-and-hotkeys)
+A news clip is shown from the presenting laptop, including through a temporary link to that laptop's app opened for judging on event day, and is never included in the repository. [Local presentation contract](contracts.md#12-presenter-assets-local-only-and-hotkeys)
 
 Clip source: Báo Thanh Niên, "Toàn cảnh vụ kẹo rau củ Kera: Bước trượt dài của Quang Linh Vlogs, Thùy Tiên, Hằng Du Mục", YouTube `URORib01rbA`, published 7 April 2025. The segment shown is 03:58.2–04:04.9, with 00:14.9–00:20.7 as a backup. [Media sources](../data/demo/kera/media_sources.md)
 
-The team did not obtain the publisher's permission. The clip is played unedited, with its source shown on screen, only on the presenting laptop and in the demo video shown in the presentation room. Neither the clip nor that video is included in the repository or published.
+The team did not obtain the publisher's permission. The clip is played unedited, with its source shown on screen, on the presenting laptop, in the demo video shown in the presentation room, and through the temporary judging link. Neither the clip nor that video is included in the repository.
 
 ## Demo
 
