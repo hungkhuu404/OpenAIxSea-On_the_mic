@@ -41,14 +41,16 @@ def write_rule(directory, rule_id, *, approved_by="hungkhuu404", status="active"
 
 
 def use_directory(monkeypatch, registry, directory):
-    monkeypatch.setattr(registry, "all_rules", lambda: list(registry._discover(directory).values()))
+    monkeypatch.setattr(registry, "__file__", str(directory / "registry.py"))
 
 
-def test_discovery_matches_constant_and_meta(registry, tmp_path):
+def test_discovery_matches_constant_and_meta(registry, tmp_path, monkeypatch):
     write_rule(tmp_path, "R04", filename="different_name")
     (tmp_path / "different_name.meta.json").rename(tmp_path / "metadata.meta.json")
     (tmp_path / "nearhit.py").write_text('raise RuntimeError("not a rule")\n', encoding="utf-8")
     assert list(registry._discover(tmp_path)) == ["R04"]
+    use_directory(monkeypatch, registry, tmp_path)
+    assert registry.load_pack(["R04"]).active[0].rule_id == "R04"
     meta_path = tmp_path / "metadata.meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     meta["id"] = "R09"
@@ -130,3 +132,75 @@ def test_missing_collaborator_is_not_hidden(registry, monkeypatch):
     monkeypatch.setattr(builtins, "__import__", missing)
     with pytest.raises(ModuleNotFoundError, match="not ready"):
         registry.all_rules()
+
+
+@pytest.mark.parametrize("malformed", [False, True])
+def test_unselected_import_failure_is_isolated_but_full_inspection_fails(registry, tmp_path, monkeypatch, malformed):
+    write_rule(tmp_path, "R04")
+    broken = write_rule(tmp_path, "R09")
+    failure = "not valid Python!" if malformed else 'raise RuntimeError("synthetic R09 import failure")'
+    broken.write_text(broken.read_text(encoding="utf-8") + "\n" + failure + "\n", encoding="utf-8")
+    use_directory(monkeypatch, registry, tmp_path)
+    assert [rule.rule_id for rule in registry.load_pack(["R04"]).active] == ["R04"]
+    error = SyntaxError if malformed else RuntimeError
+    with pytest.raises(error):
+        registry.load_pack(["R09"])
+    with pytest.raises(error):
+        registry.all_rules()
+
+
+@pytest.mark.parametrize("status", ["proposed", "quarantined"])
+def test_inactive_rule_is_not_imported_as_active(registry, tmp_path, monkeypatch, status):
+    write_rule(tmp_path, "R04")
+    broken = write_rule(tmp_path, "R09", status=status)
+    broken.write_text(broken.read_text(encoding="utf-8") + '\nraise RuntimeError("disabled import failure")\n', encoding="utf-8")
+    use_directory(monkeypatch, registry, tmp_path)
+    assert [rule.rule_id for rule in registry.load_pack(["R04", "R09"]).active] == ["R04"]
+    with pytest.raises(RuntimeError, match="disabled import failure"):
+        registry.load_pack(["R04"], quarantined=["R09"])
+
+
+def test_approval_is_checked_before_import(registry, tmp_path, monkeypatch):
+    broken = write_rule(tmp_path, "R04", approved_by=None)
+    broken.write_text(broken.read_text(encoding="utf-8") + '\nraise RuntimeError("unapproved import failure")\n', encoding="utf-8")
+    use_directory(monkeypatch, registry, tmp_path)
+    with pytest.raises(ValueError, match="approval"):
+        registry.load_pack(["R04"])
+    with pytest.raises(RuntimeError, match="unapproved import failure"):
+        registry.load_pack(["R04"], mode="measure")
+
+
+def test_candidate_replaces_main_before_import_and_ignores_other_candidates(registry, tmp_path, monkeypatch):
+    main = tmp_path / "main"
+    broken = write_rule(main, "R04")
+    broken.write_text(broken.read_text(encoding="utf-8") + '\nraise RuntimeError("replaced main import failure")\n', encoding="utf-8")
+    use_directory(monkeypatch, registry, main)
+    candidate = tmp_path / "candidate with spaces"
+    write_rule(candidate / "rules", "R04", approved_by=None, status="proposed")
+    other = write_rule(candidate / "rules", "R09", approved_by=None, status="proposed")
+    other.write_text(other.read_text(encoding="utf-8") + '\nraise RuntimeError("unselected candidate import failure")\n', encoding="utf-8")
+    pack = registry.load_pack(["R04"], mode="measure", candidate_dir=candidate)
+    assert [rule.rule_id for rule in pack.active] == ["R04"]
+    assert pack.active[0].meta.approved_by is None
+
+
+@pytest.mark.parametrize("duplicate", ["metadata", "module"])
+def test_duplicate_id_validation_survives_pack_filtering(registry, tmp_path, monkeypatch, duplicate):
+    write_rule(tmp_path, "R04")
+    path = write_rule(tmp_path, "R09")
+    source = path.with_suffix(".meta.json") if duplicate == "metadata" else path
+    target = tmp_path / ("duplicate.meta.json" if duplicate == "metadata" else "duplicate.py")
+    target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    use_directory(monkeypatch, registry, tmp_path)
+    with pytest.raises(ValueError, match="Duplicate"):
+        registry.load_pack(["R04"])
+    with pytest.raises(ValueError, match="Duplicate"):
+        registry.all_rules()
+
+
+def test_selected_module_still_requires_matching_metadata(registry, tmp_path, monkeypatch):
+    path = write_rule(tmp_path, "R04")
+    path.write_text(path.read_text(encoding="utf-8").replace("FAMILY = 'R04'", "FAMILY = 'R09'"), encoding="utf-8")
+    use_directory(monkeypatch, registry, tmp_path)
+    with pytest.raises(ValueError, match="Rule/meta mismatch: R04.FAMILY"):
+        registry.load_pack(["R04"])
