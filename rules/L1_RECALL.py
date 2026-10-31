@@ -11,10 +11,10 @@ PRECEDENCE = 0
 def check_session(dossier_view, as_of):
     if (dossier_view is not None and dossier_view.recall_date is not None
             and dossier_view.recall_date <= as_of):
-        from rules._common import SessionFlag
+        from rules._common import make_session_flag
 
-        return [SessionFlag(
-            flag_code="RECALLED_AT_AS_OF", rule_id=RULE_ID, verdict="red",
+        return [make_session_flag(
+            flag_code="RECALLED_AT_AS_OF", rule_id=RULE_ID,
             legal_basis=ANCHORS,
             message="The product was recalled on or before the broadcast date.",
         )]

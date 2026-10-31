@@ -12,10 +12,10 @@ ROLES = ("bac_si", "duoc_si", "nguoi_benh")
 def check(atom_view):
     if atom_view.speaker_role not in ROLES:
         return []
-    from rules._common import RuleHit
+    from rules._common import make_hit
 
     # The verified role may come from the previous turn, outside this atom.
-    return [RuleHit(
+    return [make_hit(
         rule_id=RULE_ID, family=FAMILY, matched="", law_anchor=ANCHORS[0],
         law_span=LAW_SPAN[0], precedence=PRECEDENCE, ambiguous_negation=False,
     )]

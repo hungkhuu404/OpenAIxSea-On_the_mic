@@ -49,7 +49,8 @@ def atom(text, **changes):
 def records(monkeypatch):
     # Exercise rule decisions independently while the shared records are landing.
     monkeypatch.setitem(sys.modules, "rules._common", SimpleNamespace(
-        RuleHit=SimpleNamespace, SessionFlag=SimpleNamespace,
+        make_hit=lambda **fields: SimpleNamespace(**fields),
+        make_session_flag=lambda **fields: SimpleNamespace(verdict="red", **fields),
     ))
 
 
@@ -136,6 +137,13 @@ def test_r09_source_span_preserves_original():
     hits = rule("R09").check(atom(text))
     assert len(hits) == 1
     assert hits[0].matched == "SỐ   1"
+
+
+def test_r09_repeated_phrase_keeps_scope():
+    ready("rules._common")
+    hits = rule("R09").check(atom("tốt nhất hiện nay, hãy chọn thứ tốt nhất"))
+    assert len(hits) == 1
+    assert hits[0].matched == "tốt nhất hiện"
 
 
 def test_golden_r09_and_reenactment():

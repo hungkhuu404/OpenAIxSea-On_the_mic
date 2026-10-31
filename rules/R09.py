@@ -10,18 +10,21 @@ LAW_SPAN = "duy nhất"
 PRECEDENCE = 9
 TRIGGER_PATTERN = (
     r"(?<!\w)(?:duy nhất|số một|số 1|hàng đầu"
-    r"|đầu tiên(?= (?:tại|ở|trên)(?!\w))"
-    r"|(?!(?:ít|thống) nhất(?!\w))\w+ nhất(?= (?:hiện|thị|việt|thế|trên)(?!\w))"
+    r"|đầu tiên (?:tại|ở|trên)"
+    r"|(?!(?:ít|thống) nhất(?!\w))\w+ nhất (?:hiện|thị|việt|thế|trên)"
     r")(?!\w)"
 )
 
 
 def check(atom_view):
-    from rules._common import RuleHit, original_span
+    from rules._common import make_hit, syllable_matches
 
-    return [RuleHit(
+    phrases = tuple(dict.fromkeys(
+        match.group() for match in re.finditer(TRIGGER_PATTERN, atom_view.key)
+    ))
+    return [make_hit(
         rule_id=RULE_ID, family=FAMILY,
-        matched=original_span(atom_view.text, match.start(), match.end()),
+        matched=match.matched,
         law_anchor=ANCHORS[0], law_span=LAW_SPAN,
         precedence=PRECEDENCE, ambiguous_negation=False,
-    ) for match in re.finditer(TRIGGER_PATTERN, atom_view.key)]
+    ) for match in syllable_matches(atom_view.text, phrases)]

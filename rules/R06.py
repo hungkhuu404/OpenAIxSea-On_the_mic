@@ -11,10 +11,10 @@ PRECEDENCE = 6
 def check_session(dossier_view, as_of):
     if (dossier_view.category_norm == "TPBVSK"
             and dossier_view.ad_confirmation_status == "absent"):
-        from rules._common import SessionFlag
+        from rules._common import make_session_flag
 
-        return [SessionFlag(
-            flag_code="NO_AD_CONFIRMATION", rule_id=RULE_ID, verdict="red",
+        return [make_session_flag(
+            flag_code="NO_AD_CONFIRMATION", rule_id=RULE_ID,
             legal_basis=ANCHORS,
             message="The product has no advertising content confirmation.",
         )]
