@@ -233,13 +233,17 @@ def test_runtime_records_and_registry():
     models = ready("core.models")
     view = models.DossierView(sku_id="demo_sku", category_norm="TPBVSK",
                              ad_confirmation_status="absent",
-                             declaration_date=None, recall_date=None)
+                             declaration_date=date(2027, 1, 1),
+                             recall_date=date(2025, 3, 24))
     for rule_id in RULE_IDS:
         pack = registry.load_pack([rule_id], mode="measure")
-        if rule_id == "R06":
+        if rule_id in ("R06", "L1_PREDECL", "L1_RECALL"):
             hits = pack.check_session(view, date(2026, 10, 21))
             assert len(hits) == 1 and isinstance(hits[0], models.SessionFlag)
         elif rule_id in ("R08", "R09"):
             av = models.AtomView(**vars(atom("số 1 Việt Nam", speaker_role="duoc_si")))
             hits = pack.check_atom(av)
             assert len(hits) == 1 and isinstance(hits[0], models.RuleHit)
+        else:
+            assert pack.check_atom(atom("Example")) == []
+            assert pack.check_session(view, date(2026, 10, 21)) == []
