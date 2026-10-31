@@ -421,6 +421,35 @@ def test_windows_tree_stop_targets_pid_and_descendants(monkeypatch, kill_fails):
     assert calls == expected + ([] if kill_fails else [("wait", 5)])
 
 
+def _assert_worker_connection_closed(connection):
+    try:
+        assert connection.recv(1) == b""
+    except ConnectionResetError:
+        pass
+
+
+@pytest.mark.parametrize("outcome, error", [
+    (b"", None),
+    (ConnectionResetError("forced peer close"), None),
+    (b"x", AssertionError),
+    (TimeoutError("peer still connected"), TimeoutError),
+    (OSError("other socket failure"), OSError),
+])
+def test_worker_connection_closed_check(outcome, error):
+    def recv(size):
+        assert size == 1
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    connection = SimpleNamespace(recv=recv)
+    if error is None:
+        _assert_worker_connection_closed(connection)
+    else:
+        with pytest.raises(error):
+            _assert_worker_connection_closed(connection)
+
+
 def test_cancel_stops_worker_behind_launcher_without_stopping_other_process(world, monkeypatch):
     import ledger
 
@@ -469,7 +498,7 @@ def test_cancel_stops_worker_behind_launcher_without_stopping_other_process(worl
             assert len(managed) == len(connections) == 1
             assert managed[0].poll() is not None
             # The worker holds this socket until exit, even after its launcher dies.
-            assert connections[0].recv(1) == b""
+            _assert_worker_connection_closed(connections[0])
             assert bystander.poll() is None
             assert result.pid is None and not (paths.jobs_dir() / "job1.pid").exists()
         finally:
