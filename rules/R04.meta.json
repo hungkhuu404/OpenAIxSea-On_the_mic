@@ -1,0 +1,16 @@
+{
+  "id": "R04",
+  "family": "R04",
+  "origin": "law_compiled",
+  "article_id": "LDUOC-2016/D6/K15",
+  "anchors": ["LDUOC-2016/D6/K15"],
+  "law_span": "chữa bệnh",
+  "source_case_ids": [],
+  "trigger": "Contiguous treatment and medicine phrases, excluding disclaimers, clear negation and hospital-room context.",
+  "precedence": 4,
+  "attempts": [],
+  "revealed_case_ids": [],
+  "approved_by": null,
+  "approved_at": null,
+  "status": "active"
+}
