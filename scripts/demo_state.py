@@ -29,7 +29,7 @@ def stamp():
 def backup(source, destination):
     if not source.is_file() or source.is_symlink():
         raise ValueError('Ledger source is missing or is a link')
-    with closing(sqlite3.connect(source.resolve().as_uri() + '?mode=ro', uri=True)) as src:
+    with closing(sqlite3.connect(source)) as src:
         if src.execute('SELECT version FROM rule_packs LIMIT 1').fetchone() is None:
             raise ValueError('Ledger source has no rule pack')
         destination.parent.mkdir(parents=True, exist_ok=True)
