@@ -1,0 +1,1 @@
+{"backend":"codex","effort":"low","error":null,"kind":"t2","latency_ms":30422.22319999928,"model":"gpt-6.1-sol","purpose":"shadow","request_sha256":"ba03d9a7578302f21bc92db11f4910fdc1afd6127cfee6286158c1d4638d2915","response":{"entails":[{"entails":false,"evidence_span":"","permitted_id":"dk_betics_gold:thanh_phan:1"}]},"ts":"2026-10-31T07:27:05.375939+00:00","usage":null}
