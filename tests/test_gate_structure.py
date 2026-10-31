@@ -91,6 +91,17 @@ def test_docstring_and_scope(candidate, behaviour):
     assert not any("loop_input" in error for error in result.error_lines)
 
 
+@pytest.mark.parametrize("quote", ["…", "...", " … ... \n "])
+def test_docstring_requires_quotation(candidate, behaviour, quote):
+    path = candidate / "rules/R04x.py"
+    body = path.read_text(encoding="utf-8").split('"""', 2)[2]
+    path.write_text(f'"""{quote}"""{body}', encoding="utf-8")
+    result = run.run_gate("R04x", candidate)
+    assert not checks(result)[2].passed
+    assert "contains no quotation" in checks(result)[2].detail
+    assert checks(result)[4].detail == "blocked by failed static checks"
+
+
 def test_own_test_failure(candidate, behaviour):
     (candidate / "tests/test_R04x.py").write_text("def test_fail():\n    assert False\n", encoding="utf-8")
     assert not checks(run.run_gate("R04x", candidate))[4].passed

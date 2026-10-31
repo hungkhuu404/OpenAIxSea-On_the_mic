@@ -70,6 +70,9 @@ def _docstring(tree, anchors, index):
     quote = ast.get_docstring(tree)
     if not quote:
         return ["law docstring is missing"]
+    pieces = list(filter(None, (law_normalize(part) for part in re.split(r"…|\.\.\.", quote))))
+    if not pieces:
+        return ["law docstring contains no quotation"]
     bodies = {}
     for anchor in anchors:
         if anchor in index:
@@ -77,7 +80,7 @@ def _docstring(tree, anchors, index):
             body = (paths.LAW_DIR / file).read_text(encoding="utf-8").split("---", 2)[-1]
             bodies[file] = law_normalize(body)
     cursors = dict.fromkeys(bodies, 0)
-    for piece in filter(None, (law_normalize(part) for part in re.split(r"…|\.\.\.", quote))):
+    for piece in pieces:
         for file, body in bodies.items():
             position = body.find(piece, cursors[file])
             if position >= 0:
