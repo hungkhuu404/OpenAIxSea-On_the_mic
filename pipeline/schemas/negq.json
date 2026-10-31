@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "properties": {
+    "answer": {
+      "type": "string",
+      "enum": ["negated", "not_negated", "unsure"]
+    }
+  },
+  "required": ["answer"],
+  "additionalProperties": false
+}
