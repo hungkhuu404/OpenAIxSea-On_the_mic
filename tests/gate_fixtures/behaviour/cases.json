@@ -1,0 +1,5 @@
+[
+  {"case_id": "source", "sku_id": "demo_sku", "text": "A demo trigger claim.", "label": "red", "rule_ids": ["R04"], "source_date": "2025-01-08", "modality": "written"},
+  {"case_id": "outside", "sku_id": "demo_sku", "text": "An ordinary demo claim.", "label": "green", "rule_ids": ["R05"], "source_date": null, "modality": "written"},
+  {"case_id": "already_wrong", "sku_id": "kera", "text": "Another invented claim.", "label": "yellow", "rule_ids": ["R04"], "source_date": "2026-10-21", "modality": "written"}
+]
