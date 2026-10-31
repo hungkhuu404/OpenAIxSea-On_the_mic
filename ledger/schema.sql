@@ -1,0 +1,18 @@
+CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS turns (session_id TEXT NOT NULL REFERENCES sessions, turn_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(session_id, turn_id));
+CREATE TABLE IF NOT EXISTS atoms (atom_key TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions, turn_id TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS verdicts (verdict_id INTEGER PRIMARY KEY AUTOINCREMENT, atom_key TEXT NOT NULL, rule_pack_version INTEGER NOT NULL, supersedes INTEGER REFERENCES verdicts(verdict_id), data TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS verdict_lookup ON verdicts(atom_key, rule_pack_version, verdict_id);
+CREATE TABLE IF NOT EXISTS session_flags (session_id TEXT NOT NULL REFERENCES sessions, flag_code TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(session_id, flag_code));
+CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, type TEXT NOT NULL, payload TEXT NOT NULL);
+CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(x, xf, kind UNINDEXED, session_id UNINDEXED, turn_id UNINDEXED, atom_key UNINDEXED, tokenize='unicode61 remove_diacritics 0');
+CREATE TABLE IF NOT EXISTS llm_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, request_sha256 TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS jobs (job_id TEXT PRIMARY KEY, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS job_attempts (job_id TEXT NOT NULL REFERENCES jobs, attempt_no INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(job_id, attempt_no));
+CREATE TABLE IF NOT EXISTS rule_packs (version INTEGER PRIMARY KEY, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS labels (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS pending_dossier (pending_id TEXT PRIMARY KEY, data TEXT NOT NULL);
+CREATE TRIGGER IF NOT EXISTS verdicts_no_update BEFORE UPDATE ON verdicts BEGIN SELECT RAISE(ABORT, 'verdicts are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS verdicts_no_delete BEFORE DELETE ON verdicts BEGIN SELECT RAISE(ABORT, 'verdicts are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS events_no_update BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS events_no_delete BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
