@@ -82,8 +82,12 @@ def _path(value, root, rule_id, files, *, write=False):
     if not allowed:
         raise ValueError(f"forbidden path: {value}")
     target = root / value
-    if not target.resolve().is_relative_to(root):
+    resolved = target.resolve()
+    if not resolved.is_relative_to(root):
         raise ValueError("symlink outside candidate")
+    if resolved != target.absolute():
+        _path(resolved.relative_to(root).as_posix(), root, rule_id, files, write=write)
+        return
     if target.is_dir():
         for child in sorted(target.iterdir()):
             _path(child.relative_to(root).as_posix(), root, rule_id, files, write=write)
@@ -183,11 +187,12 @@ def _command(command, root, rule_id, files, *, wrapped=False):
     tokens = _tokens(command)
     name = _basename(tokens[0])
     if name in SHELLS:
-        if wrapped or len(tokens) < 3 or tokens[1].lower() not in {SHELLS[name], "-c", "-lc"}:
+        switches = {"-c", "-lc"} if name in ("bash", "sh", "zsh") else {SHELLS[name]}
+        if wrapped or len(tokens) < 3 or tokens[1].lower() not in switches:
             raise ValueError("invalid or nested shell wrapper")
         if name != "cmd" and len(tokens) != 3:
             raise ValueError("shell wrapper requires one command argument")
-        payload = tokens[2] if len(tokens) == 3 else shlex.join(tokens[2:])
+        payload = tokens[2] if len(tokens) == 3 else re.split(r"\s+/c\s+", command, maxsplit=1, flags=re.I)[1]
         _command(payload, root, rule_id, files, wrapped=True)
         return
     segments = list(_segments(command))
