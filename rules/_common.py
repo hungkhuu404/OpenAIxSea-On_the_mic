@@ -1,6 +1,7 @@
 """Source-bound matching and record builders shared by pure rules."""
 
 import re
+import unicodedata
 from dataclasses import dataclass
 
 
@@ -26,8 +27,12 @@ def syllable_matches(text, phrases):
         phrase_key, _ = match_key(phrase)
         for match in re.finditer(r"(?<!\w)" + re.escape(phrase_key) + r"(?!\w)", key):
             start = offsets[match.start()]
-            last = offsets[match.end() - 1]
-            limit = next((offset for offset in offsets[match.end():] if offset > last), len(text))
+            limit = offsets[match.end() - 1] + 1
+            # Expanded syllables can refer to only part of an original source token.
+            while start > 0 and not text[start - 1].isspace() and not unicodedata.category(text[start - 1]).startswith("P"):
+                start -= 1
+            while limit < len(text) and not text[limit].isspace() and not unicodedata.category(text[limit]).startswith("P"):
+                limit += 1
             # Bound locate to this occurrence: exact matches later in the text win otherwise.
             located = locate(match.group(), text[start:limit])
             if located is None:
