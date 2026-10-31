@@ -227,6 +227,60 @@ def test_real_offline_miss_makes_no_ledger(case):
     assert len(result["llm_call_ids"]) == 2 and not paths.ledger_db().exists()
 
 
+def test_malformed_cached_vote_abstains_through_finalizer(case, monkeypatch, tmp_path):
+    from pipeline.guardrail import finalize
+
+    atom, items, ctx = case
+    cache = tmp_path / "cache"
+    set_override("LLM_CACHE_DIR", str(cache))
+    set_override("LLM_BACKEND", "codex")
+    set_override("OFFLINE", 0)
+    monkeypatch.setattr(paths, "LOCAL_DIR", tmp_path / "diagnostics")
+    calls = []
+
+    def backend(model, effort, schema_name, schema, messages, kind, timeout_s):
+        calls.append(kind)
+        response = (dict(label="supported", permitted_id=items[0]["permitted_id"],
+            closest_permitted_id=None, evidence_span="Contains oats", numbers=None)
+            if kind == "t1" else dict(entails=[dict(permitted_id=item["permitted_id"],
+                entails=index == 0, evidence_span=item["text"] if index == 0 else "")
+                for index, item in enumerate(items)]))
+        llm._validate(response, schema)
+        return llm._Transport(response=response)
+
+    monkeypatch.setattr(llm, "_backend", backend)
+    with llm.run_scope(measuring=True):
+        warm = judge.judge(atom, items, ctx, "live")
+    assert warm.verdict == "green" and sorted(calls) == ["t1", "t2"]
+    assert {path.stem for path in cache.rglob("*.json")} == set(warm.llm_call_ids)
+    location = llm.cache_path(cache, warm.llm_call_ids[0])
+    row = json.loads(location.read_text(encoding="utf-8"))
+    assert row["kind"] == "t1" and row["error"] is None
+    del row["response"]["label"]
+    location.write_text(json.dumps(row), encoding="utf-8")
+    before = {path: path.read_bytes() for path in cache.rglob("*.json")}
+    set_override("OFFLINE", 1)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Offline judge must use the existing cache without transport")
+
+    monkeypatch.setattr(llm, "_backend", forbidden)
+    with llm.run_scope(measuring=True), llm.observe_results() as observed:
+        draft = judge.judge(atom, items, ctx, "live")
+        result = finalize(dict(asdict(draft), atom_key="synthetic:t01.a1"), ctx, rule_pack_version=1)
+    assert draft.verdict == result.verdict == "abstain"
+    assert draft.reason_code == result.reason_code == "LLM_OFF"
+    assert result.decided_by == "abstain:LLM_OFF"
+    assert result.llm_call_ids == warm.llm_call_ids
+    assert len(observed) == 2 and all(vote.cache_hit for vote in observed)
+    failed = next(vote for vote in observed if vote.kind == "t1")
+    assert failed.error.kind == "schema" and failed.response is None
+    assert next(vote for vote in observed if vote.kind == "t2").error is None
+    assert sorted(calls) == ["t1", "t2"]
+    assert {path: path.read_bytes() for path in cache.rglob("*.json")} == before
+    assert not paths.ledger_db().exists()
+
+
 def test_sync_judge_rejects_an_event_loop_without_starting_votes(case, votes):
     async def check():
         with pytest.raises(RuntimeError, match="worker thread"):

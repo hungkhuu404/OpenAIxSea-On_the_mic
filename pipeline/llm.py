@@ -396,10 +396,14 @@ def call(kind, purpose, model, effort, schema_name, messages, timeout_s=None, ca
             cached = LLMCall.model_validate_json(location.read_text(encoding="utf-8"))
             if cached.error is not None or cached.request_sha256 != sha:
                 continue
-            _validate(cached.response, schema)
             result = Result(**(cached.model_dump() | base), cache_hit=True)
+            try:
+                _validate(cached.response, schema)
+            except ValueError as exc:
+                result.response = None
+                result.error = _error("schema", str(exc))
             result.latency_ms = (time.monotonic() - started) * 1000
-            if (purpose == "shadow" and directory == local and override is None
+            if (result.error is None and purpose == "shadow" and directory == local and override is None
                     and not _LOCAL_WRITES.get()):
                 _check_shadow_backend(backend)
                 _write_once(cache_path(paths.CACHE_DIR, sha), _record(result))
