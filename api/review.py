@@ -28,11 +28,6 @@ class ReportRequest(BaseModel):
     correct_label: Verdict | None = None
 
 
-class DossierRequest(BaseModel):
-    sku_id: str = Field(min_length=1)
-    change: dict
-
-
 class DependencyNotReady(Exception):
     def __init__(self, module):
         super().__init__(module)
@@ -193,8 +188,8 @@ async def merge(id: str, body: dict = Body(default={})):
 
 
 @router.post("/dossier-events/update")
-async def update(body: DossierRequest):
-    return await work("pipeline.dossier_events", "propose_dossier_update", body.sku_id, body.change)
+async def update():
+    raise DependencyNotReady("pipeline.dossier_events")
 
 
 @router.get("/pending")
@@ -203,8 +198,8 @@ def pending():
 
 
 @router.post("/pending/{id}/approve")
-async def approve(id: str, body: dict = Body(default={})):
-    return await work("pipeline.dossier_events", "approve_pending", id, approver(body))
+async def approve(id: str):
+    raise DependencyNotReady("pipeline.dossier_events")
 
 
 @router.get("/who-decided")

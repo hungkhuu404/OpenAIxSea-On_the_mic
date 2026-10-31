@@ -138,10 +138,8 @@ def test_worker_routes_and_approval(client, monkeypatch, tmp_path):
         assert_no_event_loop(); seen.append(args); return {'ok': True}
     monkeypatch.setitem(sys.modules, 'loop.merge', SimpleNamespace(merge=work, dry_run=work))
     monkeypatch.setitem(sys.modules, 'loop.labels', SimpleNamespace(record_report_wrong=work))
-    monkeypatch.setitem(sys.modules, 'pipeline.dossier_events', SimpleNamespace(propose_dossier_update=work, approve_pending=work))
     for body in ({}, {'approved_by': ''}, {'approved_by': None}, {'approved_by': '  '}):
         assert client.post('/api/rules/R04/merge', json=body).status_code == 400
-        assert client.post('/api/pending/p1/approve', json=body).status_code == 400
     dry = client.get('/api/rules/R04/dryrun')
     assert dry.status_code == 200
     assert dry.json()['scope']['golden_cases'] == 2
@@ -149,9 +147,28 @@ def test_worker_routes_and_approval(client, monkeypatch, tmp_path):
     assert dry.json()['scope']['measured_at']
     assert client.post('/api/rules/R04/merge', json={'approved_by': 'operator'}).status_code == 200
     assert client.post('/api/report-wrong', json=dict(verdict_id=1, reporter='operator')).status_code == 200
-    assert client.post('/api/dossier-events/update', json=dict(sku_id='demo_sku', change={'function': 'x'})).status_code == 200
-    assert client.post('/api/pending/p1/approve', json={'approved_by': 'operator'}).status_code == 200
-    assert seen == [('R04',), ('R04', 'operator'), (1, 'operator', None), ('demo_sku', {'function': 'x'}), ('p1', 'operator')]
+    assert seen == [('R04',), ('R04', 'operator'), (1, 'operator', None)]
+
+
+@pytest.mark.parametrize("module_state", ["missing", "trimmed", "legacy"])
+def test_deferred_dossier_routes_are_always_503(client, monkeypatch, module_state):
+    def forbidden(*args, **kwargs):
+        pytest.fail("Deferred dossier operation was invoked")
+
+    module = None if module_state == "missing" else SimpleNamespace()
+    if module_state == "legacy":
+        module.propose_dossier_update = forbidden
+        module.approve_pending = forbidden
+    monkeypatch.setitem(sys.modules, "pipeline.dossier_events", module)
+    for path, body in [
+        ("/api/dossier-events/update", {"sku_id": "demo_sku", "change": {}}),
+        ("/api/pending/p1/approve", {"approved_by": "operator"}),
+        ("/api/dossier-events/update", {}),
+        ("/api/pending/p1/approve", {}),
+    ]:
+        response = client.post(path, json=body)
+        assert response.status_code == 503
+        assert response.json() == {"todo": "pipeline.dossier_events"}
 
 
 @pytest.mark.parametrize("transitive", ["internal_dependency", "textnorm", "rules.registry"])
