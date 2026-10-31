@@ -3,6 +3,7 @@ import { sessionView } from '../ui/session.js';
 import { sessionTools } from '../ui/session-tools.js';
 import { clipScene, subtitleLines } from '../ui/clip.js';
 import { setPresenter } from '../ui/data.js';
+import { sessionScreen } from '../ui/session-screen.js';
 
 class Node {
   constructor(tag = '') { this.tagName = tag; this._text = ''; this.children = []; this.dataset = {}; this.classes = new Set(); this.classList = { add: name => this.classes.add(name), remove: name => this.classes.delete(name) }; }
@@ -15,7 +16,7 @@ class Node {
   focus() { this.focused = true; }
   pause() { this.paused = true; }
 }
-globalThis.document = { createElement: tag => new Node(tag), createTextNode: text => Object.assign(new Node(), { textContent: text }) };
+globalThis.document = { createElement: tag => new Node(tag), createTextNode: text => Object.assign(new Node(), { textContent: text }), querySelector: () => new Node() };
 globalThis.requestAnimationFrame = callback => callback();
 const step = { id: 1, type: 'step', payload: { session_id: 'clip-a1', turn_id: 't02', step: 'S1', outcome: 'extracted', ms: 10 } };
 const session = { session_id: 'synthetic', sku_pin: 'kera', as_of: '2025-01-08', channel: 'livestream',
@@ -33,6 +34,7 @@ globalThis.fetch = async (url, options) => {
     { turn_id: 't02', display_speaker: 'Speaker unknown', snippet: 'Second claim' },
     { turn_id: 't01', display_speaker: '[TEST ROLE]', snippet: 'First claim' }];
   else if (url.includes('/api/sessions/clip-')) value = structuredClone(clip);
+  else if (url.includes('/api/sessions/kera-')) value = structuredClone({ ...session, fixture: true });
   else if (url.includes('/api/events')) value = [step];
   else if (url.includes('.subs.json')) value = [{ start: 2, end: 4, vi: 'Synthetic subtitle', en: 'English subtitle' }];
   else value = {};
@@ -85,4 +87,8 @@ dispose(); assert.equal(video.paused, true);
 const backupRoot = new Node();
 await clipScene(backupRoot, 'a2', { clips: {}, translations: {}, video_mode: true }, () => {});
 assert.match(backupRoot.textContent, /Clip shown live on the presenting laptop only/);
+const sessionRoot = new Node();
+const close = await sessionScreen(sessionRoot, 'kera-reenact-2025-01-08', {}, {});
+assert.deepEqual(sent.at(-1), { kind: 'reenactment', sku_id: 'kera', as_of: '2025-01-08' });
+close();
 console.log('P4 recall, search, subtitles, clip timing and video-mode checks passed');

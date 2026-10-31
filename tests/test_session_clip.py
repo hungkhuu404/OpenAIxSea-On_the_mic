@@ -73,7 +73,7 @@ def test_startup_worker_idempotence_and_clip_route(assets, runner, monkeypatch):
     original = sessions.ensure_clip_session
 
     def ensure(*args, **kwargs):
-        threads.append(threading.get_ident())
+        threads.append((threading.get_ident(), loop_thread[-1]))
         return original(*args, **kwargs)
 
     monkeypatch.setattr("api.app.ensure_clip_session", ensure)
@@ -95,7 +95,7 @@ def test_startup_worker_idempotence_and_clip_route(assets, runner, monkeypatch):
             assert stored.verdicts[0].reason_code == "LLM_OFF"
             assert len(ledger.list_sessions()) == 1
     assert len(runner) == 1
-    assert all(thread not in loop_thread for thread in threads)
+    assert all(worker != loop for worker, loop in threads)
     assert len([event for event in ledger.events_since(0) if event.type == "session.ingested"]) == 1
 
 

@@ -1,5 +1,5 @@
 import { el } from './dom.js';
-import { loadSession } from './data.js';
+import { loadSession, post } from './data.js';
 import { sessionView } from './session.js';
 import { sessionTools } from './session-tools.js';
 import { watchSession } from './session-events.js';
@@ -9,6 +9,10 @@ export async function sessionScreen(root, id, translations = {}, { publicMode = 
   let stop = () => {}, disposed = false, revision = 0;
   async function show(next) {
     const current = ++revision;
+    if (!publicMode && /^kera-reenact-(2024-12-12|2025-01-08)$/.test(next)) {
+      await post('/api/sessions', { kind: 'reenactment', sku_id: 'kera', as_of: next.slice('kera-reenact-'.length) });
+      if (disposed || current !== revision) return;
+    }
     const session = await loadSession(next, publicMode);
     if (disposed || current !== revision) return;
     if (!session) {
