@@ -85,6 +85,7 @@ def test_allowed_commands(tmp_path, candidate, command):
     'pytest -q tests/test_R04x.py -p evil', 'cat core/*.py',
     'cmd /c cat core/sample.py; python -c pass',
     "/bin/zsh -lc '/bin/sh -c pwd'",
+    '$HOME/bin/python -m pytest -q tests/test_R04x.py',
 ])
 def test_one_bad_command_produces_one_error(tmp_path, candidate, command):
     _, errors = scan(tmp_path, candidate, [event(command)])
@@ -106,11 +107,15 @@ def test_file_events_and_fail_closed(tmp_path, candidate):
     for row in ({"type": "item.completed", "item": {"type": "mcp_tool_call"}},
                 {"type": "item.completed", "item": {"type": "web_search"}},
                 {"type": "item.completed", "item": {}}, {"type": "future.event"},
+                {"type": "item.completed", "item": {"type": "file_read", "path": None}},
                 {"type": "item.completed", "item": {"type": "file_change", "changes": [{"path": "core/sample.py"}]}}):
         assert len(scan(tmp_path, candidate, [row])[1]) == 1
     assert len(scan(tmp_path, candidate, [event("ls"), event("ls")])[1]) == 1
 
 
 def test_symlink_cannot_hide_forbidden_file(tmp_path, candidate):
-    (candidate / "core/link.py").symlink_to(candidate / "rules/R04.meta.json")
+    try:
+        (candidate / "core/link.py").symlink_to(candidate / "rules/R04.meta.json")
+    except OSError:
+        pytest.skip("symlink creation unavailable")
     assert len(scan(tmp_path, candidate, [event("cat core/link.py")])[1]) == 1

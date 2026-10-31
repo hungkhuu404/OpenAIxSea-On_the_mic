@@ -94,7 +94,7 @@ def _anchors(tree, meta, rule_id, index):
     blocked = forbidden["exact"] + forbidden["prefixes"]
     errors = []
     anchors = meta.get("anchors", [])
-    if not anchors or not isinstance(anchors, list):
+    if not anchors or not isinstance(anchors, list) or not all(isinstance(anchor, str) and anchor for anchor in anchors):
         return ["anchors must be a nonempty list"]
     for anchor in anchors:
         if anchor not in index:
@@ -125,6 +125,8 @@ def _anchors(tree, meta, rule_id, index):
             errors.append(f"module/meta mismatch: {name}")
     if meta.get("id") != rule_id:
         errors.append("metadata id differs from candidate id")
+    if type(meta.get("precedence")) is int and constants.get("PRECEDENCE") != meta["precedence"]:
+        errors.append("module/meta mismatch: PRECEDENCE")
     return errors
 
 
@@ -190,6 +192,8 @@ def run_gate(rule_id, candidate_dir, log=None, sources=None, *, ci=False, base="
     try:
         tree = ast.parse((candidate / "rules" / f"{rule_id}.py").read_text(encoding="utf-8"))
         meta = json.loads((candidate / "rules" / f"{rule_id}.meta.json").read_text(encoding="utf-8"))
+        if not isinstance(meta, dict):
+            raise ValueError("Metadata must be an object")
     except (OSError, ValueError, SyntaxError) as error:
         tree, meta = ast.parse(""), {}
         record(1, [str(error).replace("\n", " ")])

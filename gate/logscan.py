@@ -50,7 +50,10 @@ def _basename(value):
     return value.replace("\\", "/").rsplit("/", 1)[-1].lower().removesuffix(".exe")
 
 
-def _path(value, root, rule_id, files, *, write=False):
+def _path(value, root, rule_id, files, *, write=False, visited=None):
+    visited = set() if visited is None else visited
+    if not isinstance(value, str):
+        raise ValueError("missing literal path")
     value = value.replace("\\", "/")
     if not value or any(char in value for char in "~$*?[]{}\n\r") or ".." in value.split("/"):
         raise ValueError("non-literal or traversing path")
@@ -86,11 +89,14 @@ def _path(value, root, rule_id, files, *, write=False):
     if not resolved.is_relative_to(root):
         raise ValueError("symlink outside candidate")
     if resolved != target.absolute():
-        _path(resolved.relative_to(root).as_posix(), root, rule_id, files, write=write)
+        _path(resolved.relative_to(root).as_posix(), root, rule_id, files, write=write, visited=visited)
         return
     if target.is_dir():
+        if resolved in visited:
+            return
+        visited.add(resolved)
         for child in sorted(target.iterdir()):
-            _path(child.relative_to(root).as_posix(), root, rule_id, files, write=write)
+            _path(child.relative_to(root).as_posix(), root, rule_id, files, write=write, visited=visited)
 
 
 def _read_args(name, args, root, rule_id, files):
@@ -185,6 +191,9 @@ def _command(command, root, rule_id, files, *, wrapped=False):
     if any(token in command for token in ("$(", "`", "${", "\n", "\r", "<", ">")):
         raise ValueError("shell expansion or redirection is forbidden")
     tokens = _tokens(command)
+    executable = tokens[0].replace("\\", "/")
+    if any(char in executable for char in "~$*?[]{}") or ".." in executable.split("/"):
+        raise ValueError("non-literal executable path")
     name = _basename(tokens[0])
     if name in SHELLS:
         switches = {"-c", "-lc"} if name in ("bash", "sh", "zsh") else {SHELLS[name]}
@@ -263,7 +272,7 @@ def scan_log(log_path, candidate_dir, rule_id):
                     _path(change["path"], root, rule_id, files, write=True)
             else:
                 raise ValueError("unknown or missing item type")
-        except (ValueError, KeyError, TypeError, OSError) as error:
+        except (ValueError, KeyError, TypeError, OSError, RuntimeError) as error:
             errors.append(f"Log line {number}: {error}")
     if not lines:
         errors.append("Log line 1: empty log")

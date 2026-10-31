@@ -152,7 +152,7 @@ def main(argv=None):
             _verify_freeze(cases)
         if args.standin_every:
             cases = sorted(cases, key=lambda case: case["case_id"])[args.standin_every - 1::args.standin_every]
-        cases = [case | {"as_of": case_as_of(case)} for case in cases]
+        cases = [case | {"as_of": case_as_of(case), "source_date": case_as_of(case)} for case in cases]
         import pipeline.runner as runner
         from pipeline.llm import run_scope
         print(config_line(), file=sys.stderr)
