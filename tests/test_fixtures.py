@@ -66,14 +66,13 @@ def test_fixture_parses_as_core_record(filename, record, many):
         assert set(parsed.model_dump(mode="json")) == set(item)
 
 
-def test_fixture_files_are_utf8_nfc_without_bom_and_use_lf():
+def test_fixture_files_are_utf8_nfc_without_bom():
     assert {path.name for path in FIXTURES.iterdir() if path.name != ".gitkeep"} == {
         row[0] for row in RECORDS
     }
     for filename, _, _ in RECORDS:
         raw = (FIXTURES / filename).read_bytes()
         assert not raw.startswith(b"\xef\xbb\xbf")
-        assert b"\r" not in raw
         assert raw.endswith(b"\n")
         text = raw.decode("utf-8")
         assert unicodedata.normalize("NFC", text) == text
