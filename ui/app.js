@@ -1,6 +1,7 @@
 import { el } from './dom.js';
 import { request, setPresenter, loadSession, events } from './data.js';
 import { sessionView } from './session.js';
+import { watchSession } from './session-events.js';
 import { presenterView } from './presenter.js';
 import { sentenceBox } from './preflight.js';
 import { reviewView } from './review.js';
@@ -38,23 +39,13 @@ async function showSession(root, id, translations = {}) {
     root.append(el('p', 'Replay not ready. Prepared sessions will appear when the replay modules are available.', 'notice'));
     return;
   }
-  let view = sessionView(session, translations, session.events || []);
+  const view = sessionView(session, translations, session.events || []);
   root.append(view.node);
   const latest = session.verdicts?.map(row => row.ts).sort().at(-1);
   document.querySelector('#time-context').textContent = session.live ? 'LIVE' : `REPLAY · processed ${latest ? new Date(latest).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'}`;
   if (!session.fixture) {
-    let refreshing = false;
-    stopEvents = events(Boolean(health.public), async event => {
-      view.event(event);
-      if (!['verdict', 'turn.verdict', 'session.flag', 'backfill.done'].includes(event.type) || refreshing) return;
-      refreshing = true;
-      try {
-        const updated = await loadSession(session.session_id, Boolean(health.public));
-        if (!root.isConnected) return;
-        const next = sessionView(updated, translations);
-        view.node.replaceWith(next.node); view = next;
-      } catch { /* Keep the last confirmed evidence visible. */ }
-      finally { refreshing = false; }
+    stopEvents = watchSession(view, session.session_id, {
+      publicMode: Boolean(health.public), active: () => view.node.isConnected,
     });
   }
 }
