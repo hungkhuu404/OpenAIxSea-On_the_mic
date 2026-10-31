@@ -3,6 +3,7 @@
 from datetime import date
 import json
 from pathlib import Path
+import re
 
 from core import paths
 from core.enums import ErrorScale, Verdict
@@ -134,6 +135,8 @@ def run_behaviour(rule_id, candidate_dir, sources=None, ci=False):
     """Return checks 8–10; incomplete cache is a job error, never a rule failure."""
     from pipeline.llm import run_scope
 
+    if not re.fullmatch(r"[A-Za-z0-9_]+", rule_id):
+        raise ValueError("Rule id must contain only letters, digits and underscores")
     candidate_dir = Path(candidate_dir)
     meta = RuleMeta.model_validate_json(
         (candidate_dir / "rules" / f"{rule_id}.meta.json").read_text(encoding="utf-8"))

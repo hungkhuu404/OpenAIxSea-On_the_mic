@@ -123,6 +123,41 @@ def test_check10_cache_miss_discards_partial_failures(env, monkeypatch):
     assert run(env).error_lines == [b.CACHE_MISS]
 
 
+def test_after_cache_miss_is_not_a_rule_failure(env, monkeypatch):
+    from pipeline import runner
+    original = runner.replay
+    def replay(cases, **kwargs):
+        if kwargs["pack"] is env.after:
+            return [ReplayResult(status="not_evaluated") for case in cases]
+        return original(cases, **kwargs)
+    monkeypatch.setattr(runner, "replay", replay)
+    assert run(env).error_lines == [b.CACHE_MISS]
+
+
+def test_unchanged_errors_and_improvements_do_not_block(env):
+    env.new[2] = "yellow"
+    assert run(env).passed
+
+
+def test_measurement_forces_offline_without_changing_settings(env, monkeypatch):
+    from pipeline import llm, runner
+    from core.config import settings
+    set_override("OFFLINE", 0)
+    original = runner.replay
+    def replay(cases, **kwargs):
+        assert llm._OFFLINE.get() and llm._MEASURING.get()
+        assert settings.OFFLINE == 0
+        return original(cases, **kwargs)
+    monkeypatch.setattr(runner, "replay", replay)
+    run(env)
+    assert settings.OFFLINE == 0 and not llm._OFFLINE.get()
+
+
+def test_rule_id_cannot_escape_candidate_directory(tmp_path):
+    with pytest.raises(ValueError, match="Rule id"):
+        b.run_behaviour("../other", tmp_path, ci=True)
+
+
 @pytest.mark.parametrize("ci,sources", [(False, None), (True, "does-not-exist")])
 def test_sources_skip(env, ci, sources):
     result = run(env, ci=ci, sources=sources)
@@ -252,7 +287,7 @@ def test_missing_runner_propagates(env, monkeypatch):
 
 def test_ci_gates_only_added_t5_rule_files(monkeypatch, tmp_path):
     workflow = (Path(__file__).parents[1] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    step = workflow.split("      - name: Gate new adaptive rules\n", 1)[1]
+    step = workflow.split("      - name: Gate new adaptive rules\n", 1)[1].split("\n      - ", 1)[0]
     assert "if: github.event_name == 'pull_request'" in step
     assert "fetch-depth: 0" in workflow
     assert "CACHE_BACKEND || 'codex'" in workflow and 'OFFLINE: "1"' in workflow
