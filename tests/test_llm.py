@@ -561,3 +561,173 @@ def test_schema_validates_nested_objects_arrays_null_and_enums(boundary, monkeyp
     assert llm.call(**request(schema_name="nested")).response == {"items": [{"value": None}]}
     for _ in range(4):
         assert llm.call(**request(schema_name="nested", cache_read=False)).error.kind == "schema"
+
+
+@pytest.fixture
+def committed_shadow(tmp_path, monkeypatch):
+    import shutil
+
+    root = tmp_path / "committed repo space.dot"
+    root.mkdir()
+    monkeypatch.setattr(paths, "REPO_ROOT", root)
+    monkeypatch.setattr(paths, "CACHE_DIR", root / "cache/llm")
+    monkeypatch.setattr(paths, "LOCAL_DIR", root / ".local")
+    set_override("LLM_LOCAL_CACHE_DIR", ".local/cache")
+    set_override("LEDGER_DB", ".local/absent.db")
+    set_override("LLM_CACHE_DIR", None)
+    set_override("LLM_BACKEND", "codex")
+    set_override("OFFLINE", 0)
+    calls = []
+
+    def transport(*args):
+        calls.append(args)
+        return llm._Transport(response={"ok": True})
+
+    monkeypatch.setattr(llm, "_codex", transport)
+    monkeypatch.setattr(llm, "_api", transport)
+
+    def git(*args):
+        return subprocess.run(["git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
+                               "-c", "commit.gpgsign=false", *args], cwd=root, capture_output=True,
+                              text=True, encoding="utf-8", check=True, timeout=10).stdout
+
+    git("init")
+    args = request(purpose="shadow")
+    first = llm.call(**args)
+    location = llm.cache_path(paths.CACHE_DIR, first.request_sha256)
+    git("add", location.relative_to(root).as_posix())
+    git("commit", "-m", "Synthetic cache")
+    shutil.rmtree(paths.LOCAL_DIR)
+    return SimpleNamespace(root=root, calls=calls, args=args, first=first, location=location, git=git)
+
+
+def shadow_snapshot(root):
+    return {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*")
+            if path.is_file() and ".git" not in path.relative_to(root).parts}
+
+
+def test_shadow_read_only_keeps_normal_request_identity_and_default_logging(committed_shadow):
+    state = committed_shadow
+    before = shadow_snapshot(state.root)
+    with llm.run_scope(shadow_read_only=True):
+        hit = llm.call(**state.args)
+    assert hit.cache_hit and hit.response == state.first.response
+    assert hit.request_sha256 == state.first.request_sha256
+    assert shadow_snapshot(state.root) == before and not paths.LOCAL_DIR.exists()
+    normal = llm.call(**state.args)
+    assert normal.cache_hit and normal.request_sha256 == hit.request_sha256
+    assert (paths.LOCAL_DIR / "llm_calls.jsonl").is_file()
+    assert len(state.calls) == 1
+
+
+def test_shadow_read_only_uses_head_blob_not_modified_worktree(committed_shadow, monkeypatch):
+    state = committed_shadow
+    state.location.write_text("not a cache row", encoding="utf-8")
+    before = shadow_snapshot(state.root)
+    status = state.git("status", "--porcelain", "-uall")
+    monkeypatch.setattr(paths, "local_cache_dir", lambda **kwargs: pytest.fail("read-only resolved local cache"))
+    monkeypatch.setattr(paths, "resolve_path", lambda *args: pytest.fail("read-only resolved override"))
+    monkeypatch.setattr(llm, "_record", lambda *args: pytest.fail("read-only built a log or promotion record"))
+    with llm.run_scope(shadow_read_only=True):
+        hit = llm.call(**state.args)
+    assert hit.cache_hit and hit.response == {"ok": True}
+    assert len(state.calls) == 1 and shadow_snapshot(state.root) == before
+    assert state.git("status", "--porcelain", "-uall") == status
+
+
+@pytest.mark.parametrize("source", ["untracked", "staged", "local", "override", "absent", "fresh"])
+def test_shadow_read_only_misses_never_read_local_promote_log_or_call_transport(committed_shadow, monkeypatch, source, tmp_path):
+    state = committed_shadow
+    args = request(purpose="live" if source == "local" else "shadow",
+                   messages=[{"role": "user", "content": "Other synthetic request"}])
+    if source == "fresh":
+        args = state.args | {"cache_read": False}
+    elif source != "absent":
+        if source == "override":
+            set_override("LLM_CACHE_DIR", str(tmp_path / "external cache"))
+        with llm.run_scope(measuring=True):
+            seeded = llm.call(**args)
+        if source == "staged":
+            location = llm.cache_path(paths.CACHE_DIR, seeded.request_sha256)
+            state.git("add", location.relative_to(state.root).as_posix())
+    args["purpose"] = "shadow"
+    before = shadow_snapshot(tmp_path)
+    status = state.git("status", "--porcelain", "-uall")
+    calls = len(state.calls)
+    monkeypatch.setattr(paths, "local_cache_dir", lambda **kwargs: pytest.fail("read-only resolved local cache"))
+    monkeypatch.setattr(llm, "_record", lambda *args: pytest.fail("read-only built a log or promotion record"))
+    with llm.run_scope(shadow_read_only=True):
+        result = llm.call(**args)
+    assert not result.cache_hit and result.error.kind == "off"
+    assert len(state.calls) == calls and shadow_snapshot(tmp_path) == before
+    assert state.git("status", "--porcelain", "-uall") == status
+
+
+def test_shadow_read_only_nested_scope_tightens_and_resets_after_exception(committed_shadow):
+    state = committed_shadow
+    with pytest.raises(RuntimeError, match="synthetic scope failure"):
+        with llm.run_scope(shadow_read_only=True):
+            with llm.run_scope(shadow_read_only=False, local_writes=True):
+                assert llm.call(**state.args).cache_hit
+                miss = llm.call(**request(purpose="shadow", messages=[{"role": "user", "content": "Nested miss"}]))
+                assert miss.error.kind == "off"
+            raise RuntimeError("synthetic scope failure")
+    assert not paths.LOCAL_DIR.exists() and len(state.calls) == 1
+    normal = llm.call(**request(purpose="shadow", messages=[{"role": "user", "content": "After scope"}]))
+    assert normal.error is None and len(state.calls) == 2
+    assert llm.cache_path(paths.CACHE_DIR, normal.request_sha256).is_file()
+    assert (paths.LOCAL_DIR / "llm_calls.jsonl").is_file()
+
+
+def test_shadow_read_only_follows_batch_context_and_stays_thread_local(committed_shadow, monkeypatch):
+    from threading import Barrier
+
+    state = committed_shadow
+    before = shadow_snapshot(state.root)
+    with monkeypatch.context() as patch:
+        patch.setattr(paths, "local_cache_dir", lambda **kwargs: pytest.fail("batch resolved local cache"))
+        with llm.run_scope(shadow_read_only=True):
+            results = llm.map_calls([state.args] * 3, parallel=3)
+    assert all(result.cache_hit for result in results) and shadow_snapshot(state.root) == before
+    barrier = Barrier(2)
+
+    def readonly():
+        with llm.run_scope(shadow_read_only=True):
+            barrier.wait(timeout=5)
+            return llm.call(**request(purpose="shadow", messages=[{"role": "user", "content": "Thread miss"}]))
+
+    def normal():
+        barrier.wait(timeout=5)
+        return llm.call(**request(purpose="shadow", messages=[{"role": "user", "content": "Other thread"}]))
+
+    with ThreadPoolExecutor(2) as pool:
+        left, right = pool.submit(readonly), pool.submit(normal)
+        assert left.result(timeout=10).error.kind == "off"
+        assert right.result(timeout=10).error is None
+    assert len(state.calls) == 2
+
+
+def test_shadow_read_only_git_failure_is_an_offline_miss(committed_shadow, monkeypatch):
+    state = committed_shadow
+    before = shadow_snapshot(state.root)
+    def unavailable(*args, **kwargs):
+        raise OSError("synthetic Git failure")
+    monkeypatch.setattr(llm.subprocess, "run", unavailable)
+    with llm.run_scope(shadow_read_only=True):
+        result = llm.call(**state.args)
+    assert not result.cache_hit and result.error.kind == "off"
+    assert len(state.calls) == 1 and shadow_snapshot(state.root) == before
+
+
+def test_shadow_read_only_does_not_suppress_external_oracle_logs(committed_shadow, tmp_path):
+    state = committed_shadow
+    set_override("LLM_BACKEND", "api")
+    cache = tmp_path / "external oracle cache"
+    set_override("LLM_CACHE_DIR", str(cache))
+    original = llm.call(**request(purpose="oracle"))
+    log = cache / "llm_calls.jsonl"
+    log.unlink()
+    with llm.run_scope(shadow_read_only=True):
+        hit = llm.call(**request(purpose="oracle"))
+    assert hit.cache_hit and hit.request_sha256 == original.request_sha256
+    assert log.is_file() and not paths.LOCAL_DIR.exists()
