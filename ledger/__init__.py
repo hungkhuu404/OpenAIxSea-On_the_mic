@@ -329,6 +329,13 @@ def add_session_flags(session_id, flags):
                          (session_id, flag.flag_code, _json(flag)))
 
 
+def replace_session_flags(session_id, flags):
+    """Replace the complete flag set atomically, joining any caller transaction."""
+    with transaction() as conn:
+        conn.execute("DELETE FROM session_flags WHERE session_id=?", (session_id,))
+        add_session_flags(session_id, flags)
+
+
 def add_pending(pending):
     data = dict(_data(pending))
     data.setdefault("pending_id", uuid4().hex)
