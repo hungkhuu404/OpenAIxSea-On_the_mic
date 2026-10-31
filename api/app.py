@@ -1,4 +1,4 @@
-"""HTTP reads and event streaming; later tasks replace entries in STUB_ROUTES."""
+"""HTTP reads, session commands, event streaming and presentation policy."""
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -18,13 +18,11 @@ from api.ui import router as ui_router
 from api.review import DependencyNotReady, router as review_router
 from api.preflight import PublicRateLimit, router as preflight_router
 from api.public import ledger_lifespan
+from api.sessions import NotReady, ensure_clip_session, router as sessions_router
+from api.present import _json
 
 
-STUB_ROUTES = {
-    ("POST", "/sessions"): "P4",
-    ("POST", "/sessions/{id}/process"): "P4",
-    ("POST", "/dossier-events/recall"): "P4",
-}
+STUB_ROUTES = {}
 
 
 def _session_payload(session, presenter):
@@ -54,6 +52,13 @@ def _session_payload(session, presenter):
         else:
             speaker = role
         turn["display_speaker"] = speaker
+    if data["session_id"] in {"clip-a1", "clip-a2"} and settings.PRESENT_DIR and not settings.PUBLIC_MODE:
+        meta = _json(Path(settings.PRESENT_DIR).resolve(), f"clip/{data['session_id'][5:]}.meta.json")
+        if isinstance(meta.get("as_of_note"), str):
+            data["as_of_note"] = meta["as_of_note"]
+        if presenter == "1" and not settings.VIDEO_MODE:
+            data.update({key: meta[key] for key in ("source_line", "speaker_line")
+                         if isinstance(meta.get(key), str)})
     return data
 
 
@@ -81,6 +86,11 @@ def create_app(public=False):
     @asynccontextmanager
     async def lifespan(app):
         async with ledger_lifespan(public):
+            if not public:
+                try:
+                    await asyncio.to_thread(ensure_clip_session)
+                except NotReady as error:
+                    print(f"not ready: {error.module}", flush=True)
             fields = config.config_fields()
             app.state.config_fields = fields
             print(" ".join(f"{key}={value}" for key, value in fields.items()), flush=True)
@@ -93,6 +103,11 @@ def create_app(public=False):
     app.include_router(present_router)
     app.include_router(ui_router)
     app.include_router(review_router)
+    app.include_router(sessions_router)
+
+    @app.exception_handler(NotReady)
+    async def session_not_ready(request, exc):
+        return JSONResponse({"todo": exc.module}, status_code=503)
 
     @app.middleware("http")
     async def read_only_public(request, call_next):
@@ -147,15 +162,16 @@ def create_app(public=False):
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @app.get("/api/search")
-    def search(q: str, session_id: str | None = None):
-        return ledger.search(q, session_id)
+    def search(q: str, session_id: str | None = None, presenter: str | None = None):
+        hits = ledger.search(q, session_id)
+        sessions = {}
+        for hit in hits:
+            sid = hit["session_id"]
+            if sid not in sessions:
+                sessions[sid] = _session_payload(ledger.get_session(sid), presenter)
+            turn = next(turn for turn in sessions[sid]["turns"] if turn["turn_id"] == hit["turn_id"])
+            hit["display_speaker"] = turn["display_speaker"]
+        return hits
 
-    def stub(task):
-        def endpoint():
-            return JSONResponse({"todo": task}, status_code=501)
-        return endpoint
-
-    for (method, path), task in STUB_ROUTES.items():
-        app.add_api_route("/api" + path, stub(task), methods=[method])
     app.mount("/", StaticFiles(directory=REPO_ROOT / "ui", html=True), name="ui")
     return app

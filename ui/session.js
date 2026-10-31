@@ -17,6 +17,25 @@ export function sessionView(session, translations = {}, history = []) {
   }
   history.forEach(recordStep);
   const pipeline = el('section', '', 'pipeline');
+  const flags = el('div', '', 'session-flags');
+  const recall = el('div', '', 'recall-banner');
+  const layout = el('div', '', 'session');
+  function renderFlags() {
+    flags.replaceChildren();
+    for (const flag of session.flags || []) flags.append(el('p', flag.message, 'notice red'));
+  }
+  function selectTurn(id, scroll = false) {
+    if (!session.turns.some(turn => turn.turn_id === id)) return;
+    selected = id;
+    for (const button of turns.children) {
+      button.setAttribute('aria-pressed', String(button.dataset.turn === id));
+      if (button.dataset.turn === id) {
+        button.classList.add('search-hit');
+        if (scroll) button.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      } else button.classList.remove('search-hit');
+    }
+    renderDetail();
+  }
   function renderDetail() {
     detail.replaceChildren();
     detail.append(el('h2', `Claims · ${selected || 'No turns'}`));
@@ -41,24 +60,27 @@ export function sessionView(session, translations = {}, history = []) {
       const button = el('button', '', 'turn');
       button.dataset.turn = turn.turn_id;
       button.append(el('span', turn.start_s == null ? turn.turn_id : `${turn.start_s.toFixed(1)} s`, 'mono'), quote(turn.text, null, translations, 'speech'));
+      if (turn.display_speaker) button.append(el('small', turn.display_speaker));
       const values = (session.verdicts || []).filter(row => row.atom_key.startsWith(`${session.session_id}:${turn.turn_id}.`));
       const value = ['red', 'yellow', 'abstain', 'green'].find(color => values.some(row => row.verdict === color));
       button.append(badge(value));
-      button.onclick = () => {
-        selected = turn.turn_id;
-        for (const sibling of turns.children) sibling.setAttribute('aria-pressed', String(sibling === button));
-        renderDetail();
-      };
+      button.onclick = () => selectTurn(turn.turn_id);
       button.setAttribute('aria-pressed', String(turn.turn_id === selected));
       turns.append(button);
     }
   }
-  root.append(turns, detail); renderTurns(); renderDetail();
-  return { node: root, update(updated) {
+  root.className = 'session-screen';
+  layout.append(turns, detail); root.append(flags, recall, layout);
+  renderFlags(); renderTurns(); renderDetail();
+  return { node: root, selectTurn, resetSteps() { latestSteps.clear(); renderDetail(); }, update(updated) {
     session = updated;
     if (!session.turns.some(turn => turn.turn_id === selected)) selected = session.turns[0]?.turn_id;
-    renderTurns(); renderDetail();
+    renderFlags(); renderTurns(); renderDetail();
   }, event(event) {
+    if (event.type === 'recall.applied') {
+      const affected = event.payload.sessions.find(row => row.session_id === session.session_id);
+      if (affected) recall.textContent = `Recall applied · ${affected.flagged_atoms} flagged atoms · No human needed`;
+    }
     if (event.type === 'step' && event.payload.session_id === session.session_id) {
       recordStep(event);
       renderDetail();

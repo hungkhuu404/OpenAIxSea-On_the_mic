@@ -1,7 +1,7 @@
 import { el } from './dom.js';
-import { request, setPresenter, loadSession, events } from './data.js';
-import { sessionView } from './session.js';
-import { watchSession } from './session-events.js';
+import { request, setPresenter, events } from './data.js';
+import { sessionScreen } from './session-screen.js';
+import { clipScene } from './clip.js';
 import { presenterView } from './presenter.js';
 import { sentenceBox } from './preflight.js';
 import { reviewView } from './review.js';
@@ -33,44 +33,26 @@ document.querySelector('#palette').onclick = palette;
 document.querySelector('#stage').onclick = stage;
 setInterval(corner, 10000);
 
-async function showSession(root, id, translations = {}) {
-  const session = await loadSession(id, Boolean(health.public));
-  if (!session) {
-    root.append(el('p', 'Replay not ready. Prepared sessions will appear when the replay modules are available.', 'notice'));
-    return;
-  }
-  const view = sessionView(session, translations, session.events || []);
-  root.append(view.node);
-  const latest = session.verdicts?.map(row => row.ts).sort().at(-1);
-  document.querySelector('#time-context').textContent = session.live ? 'LIVE' : `REPLAY · processed ${latest ? new Date(latest).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'}`;
-  if (!session.fixture) {
-    stopEvents = watchSession(view, session.session_id, {
-      publicMode: Boolean(health.public), active: () => view.node.isConnected,
-    });
-  }
+async function showSession(root, id, translations = {}, options = {}) {
+  const current = generation;
+  const stop = await sessionScreen(root, id, translations, { publicMode: Boolean(health.public), ...options });
+  if (current !== generation || !root.isConnected) stop();
+  else stopEvents = stop;
 }
 async function scene(root, number, backup, manifest) {
+  const content = el('section'); root.append(content); root = content;
   try {
     if (number === 1) {
-      const key = backup ? 'a2' : 'a1', clip = manifest.clips[key];
-      if (!clip?.available) {
-        root.append(el('p', 'Clip unavailable · synthetic demo', 'notice'));
-        await showSession(root, null, manifest.translations);
-        return;
-      }
-      const video = el('video'); video.controls = true; video.src = `/present/clip/${key}.mp4`; root.append(video);
-      for (const line of [clip.speaker_line, clip.source_line]) if (line) root.append(el('p', line));
-      if (clip.subtitles) {
-        const response = await fetch(`/present/clip/${key}.subs.json`);
-        const subtitles = await response.json();
-        const caption = el('div'); root.append(caption);
-        video.ontimeupdate = () => {
-          const line = subtitles.find(item => item.start <= video.currentTime && item.end > video.currentTime);
-          caption.replaceChildren(el('p', line?.vi || ''), el('p', line?.en || '', 'translation'));
-        };
-      }
+      const key = backup ? 'a2' : 'a1';
+      const stop = await clipScene(root, key, manifest, async () => {
+        const reenactment = el('section'); root.append(reenactment);
+        try { await showSession(reenactment, 'kera-reenact-2025-01-08', manifest.translations); }
+        catch { reenactment.append(el('p', 'Reenactment not ready', 'notice')); }
+      });
+      if (!root.isConnected) stop();
+      else stopEvents = stop;
     } else if (number <= 4) {
-      await showSession(root, number === 3 ? 'kera-reenact-2024-12-12' : 'kera-reenact-2025-01-08', manifest.translations);
+      await showSession(root, number === 3 ? 'kera-reenact-2024-12-12' : 'kera-reenact-2025-01-08', manifest.translations, { focusRecall: number === 4, initialTurn: number === 2 ? 't07' : undefined });
     } else {
       const view = await reviewView({ approver: manifest.present.approver, target: manifest.present.pr1_third_target, focusPR2: number === 6 });
       root.append(view.node);

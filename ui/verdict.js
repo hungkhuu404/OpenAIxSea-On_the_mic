@@ -12,6 +12,10 @@ export function badge(value = 'abstain', flags = []) {
 
 export function verdictCard(atom, verdict, session, translations = {}) {
   const card = el('article', '', `card ${verdict.verdict}`);
+  if ((verdict.flags || []).includes('RECALLED_AFTER')) {
+    card.classList.add('recalled');
+    card.append(el('p', 'Recalled after broadcast · No human needed', 'notice'));
+  }
   const head = el('div', '', 'card-head');
   head.append(badge(verdict.verdict, verdict.flags), el('span', atom.atom_id, 'mono'));
   const columns = el('div', '', 'columns');
@@ -47,7 +51,7 @@ export function verdictCard(atom, verdict, session, translations = {}) {
     try { await post('/api/report-wrong', { verdict_id: verdict.verdict_id, reporter }); report.textContent = 'Reported'; }
     catch { report.textContent = 'Report unavailable'; }
   };
-  if (!session.public_mode) foot.append(report);
+  if (!session.public_mode && session.channel !== 'video') foot.append(report);
   card.append(head, columns, foot);
   return card;
 }

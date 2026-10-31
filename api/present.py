@@ -56,7 +56,7 @@ def manifest(request: Request, presenter: int = 0):
         clips[key] = clip
     present = _json(root, "present.json")
     translations = _json(root, "translations.json")
-    return {"slides": slides, "clips": clips,
+    return {"slides": slides, "clips": clips, "video_mode": video,
             "names": not video and _inside(root, "names.json").is_file(),
             "translations": {k: v for k, v in translations.items() if isinstance(v, str)},
             "present": {k: present[k] for k in ("pr1_third_target", "labeler", "approver")

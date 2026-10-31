@@ -20,8 +20,8 @@ const session = {
 };
 const step = (id, outcome) => ({ id, type: 'step', payload: { session_id: 'synthetic', turn_id: 't02', step: 'S1', outcome, ms: 12 } });
 const view = sessionView(session, {}, [step(1, 'extracted')]);
-const selected = () => view.node.children[0].children.find(n => n['aria-pressed'] === 'true')?.dataset.turn;
-view.node.children[0].children[1].onclick();
+const selected = () => view.node.children[2].children[0].children.find(n => n['aria-pressed'] === 'true')?.dataset.turn;
+view.node.children[2].children[0].children[1].onclick();
 assert.equal(selected(), 't02');
 assert.match(view.node.textContent, /extracted/);
 const updated = { ...session, verdicts: [{ ...session.verdicts[0], verdict: 'red', reason_code: 'UPDATED' }] };

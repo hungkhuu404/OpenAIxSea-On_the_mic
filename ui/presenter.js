@@ -19,7 +19,7 @@ export async function presenterView(showScene) {
   }
   function jump(next, backup = false) {
     previous = scene; scene = next;
-    root.replaceChildren(el('h1', ['Slides', 'Opening clip', 'Kera · 2025-01-08', '2024-12-12', 'Recall · 2025-03-25', 'Review', 'Merge PR2'][scene]));
+    root.replaceChildren(el('h1', ['Slides', 'Opening clip', 'Kera · 2025-01-08', '2024-12-12', 'Recall notice (replay)', 'Review', 'Merge PR2'][scene]));
     showScene(root, scene, backup, manifest);
   }
   slide();
