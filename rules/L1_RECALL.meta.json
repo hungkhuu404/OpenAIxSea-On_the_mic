@@ -1,0 +1,19 @@
+{
+  "id": "L1_RECALL",
+  "family": "L1_RECALL",
+  "origin": "law_compiled",
+  "article_id": "ND15-2018/D4",
+  "anchors": [
+    "ND15-2018/D4/K1",
+    "ND15-2018/D5/K2/b"
+  ],
+  "law_span": "chịu trách nhiệm hoàn toàn về an toàn của sản phẩm đó",
+  "source_case_ids": [],
+  "trigger": "Product recall date is on or before the broadcast date.",
+  "precedence": 0,
+  "attempts": [],
+  "revealed_case_ids": [],
+  "approved_by": null,
+  "approved_at": null,
+  "status": "active"
+}
