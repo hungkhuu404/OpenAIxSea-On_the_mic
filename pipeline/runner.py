@@ -246,40 +246,54 @@ def replay(targets, pack=None, persist=False, purpose="live", pack_version=None)
     if persist and any(not rule.meta.approved_by for rule in (*pack.active, *pack.quarantined)):
         raise ValueError("Only an approved live pack may persist")
     computed = []
+    originals = []
     with run_scope(offline=True, measuring=not persist):
         for target in targets:
             if isinstance(target, str):
                 import ledger
-                session = _snapshot(ledger.get_session(target)).session
+                stored = ledger.get_session(target)
+                session = _snapshot(stored).session
             else:
                 session = _case_session(target)
+                if persist:
+                    import ledger
+                    stored = ledger.get_session(session.session_id)
+            if persist:
+                originals.append(stored.model_dump() if stored is not None else None)
             computed.append(_compute(session, pack, version, purpose))
     results = ReplayBatch(_replay_result(item) for item in computed)
     if persist:
         import ledger
-        pending = []
-        sessions = []
-        for item, result in zip(computed, results, strict=True):
-            if result.status != "ok":
-                continue
-            stored = ledger.get_session(item.session.session_id)
-            prior = {row.atom_key: row for row in ledger.effective_verdicts(
-                item.session.session_id, version)} if stored is not None else {}
-            changed = []
-            for verdict in item.verdicts:
-                previous = prior.get(verdict.atom_key)
-                if previous is None or _changed(previous, verdict):
-                    if previous is not None:
-                        verdict.supersedes = previous.verdict_id
-                    changed.append(verdict)
-            atoms_changed = stored is None or stored.atoms != item.atoms
-            flags_changed = stored is None or stored.flags != item.flags
-            results.changed_cases += bool(changed or atoms_changed or flags_changed)
-            pending.extend(changed)
-            if changed or atoms_changed or flags_changed:
-                sessions.append((item, stored, atoms_changed))
-        if sessions:
-            with ledger.transaction():
+        with ledger.transaction():
+            if ledger.current_pack().version != version:
+                raise ValueError("Rule pack changed during replay; replay again with the current pack")
+            stored_sessions = []
+            for item, original in zip(computed, originals, strict=True):
+                stored = ledger.get_session(item.session.session_id)
+                if (stored.model_dump() if stored is not None else None) != original:
+                    raise ValueError("Session changed during replay; replay the session again")
+                stored_sessions.append(stored)
+            pending = []
+            sessions = []
+            for item, result, stored in zip(computed, results, stored_sessions, strict=True):
+                if result.status != "ok":
+                    continue
+                prior = {row.atom_key: row for row in ledger.effective_verdicts(
+                    item.session.session_id, version)} if stored is not None else {}
+                changed = []
+                for verdict in item.verdicts:
+                    previous = prior.get(verdict.atom_key)
+                    if previous is None or _changed(previous, verdict):
+                        if previous is not None:
+                            verdict.supersedes = previous.verdict_id
+                        changed.append(verdict)
+                atoms_changed = stored is None or stored.atoms != item.atoms
+                flags_changed = stored is None or stored.flags != item.flags
+                results.changed_cases += bool(changed or atoms_changed or flags_changed)
+                pending.extend(changed)
+                if changed or atoms_changed or flags_changed:
+                    sessions.append((item, stored, atoms_changed))
+            if sessions:
                 for item, stored, atoms_changed in sessions:
                     if stored is None:
                         ledger.add_session(item.session)
