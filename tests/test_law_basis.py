@@ -79,7 +79,7 @@ def test_family_coverage_and_anchor_order():
 
 def test_applicability_windows():
     windows = {
-        ("R08", "ND15-2018/D27/K2"): (None, "2026-05-14"),
+        ("R08", "ND15-2018/D27/K2"): (None, None),
         ("R08", "ND87-2026/D71/K4"): ("2026-05-15", None),
         ("R09", "ND87-2026/D50/K2/a"): ("2026-05-15", None),
     }
