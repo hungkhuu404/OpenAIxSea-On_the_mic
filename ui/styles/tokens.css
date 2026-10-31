@@ -1,0 +1,13 @@
+:root, [data-palette="oil"] {
+  --bg: #0A1416; --s1: #101C1F; --s2: #172629; --line: #223538;
+  --t1: #E6F0EF; --t2: #A8BCBB; --t3: #829997; --accent: #8AB4FF;
+  --green: #5CC199; --yellow: #F5DB5C; --red: #F56447; --abstain: #E1E5EA;
+  --interface: 'Be Vietnam Pro', sans-serif; --speech: 'Newsreader', serif;
+  --mono: 'JetBrains Mono', monospace; --text-size: 16px;
+}
+[data-palette="graphite"] {
+  --bg: #0D0F13; --s1: #14171D; --s2: #1B1F27; --line: #2A2F39;
+  --t1: #EDF0F5; --t2: #B3B9C6; --t3: #8A919F; --accent: #8FB3D9;
+  --green: #5CC199; --yellow: #F5DB5C; --red: #F56447; --abstain: #E1E5EA;
+}
+[data-stage="true"] { --bg: color-mix(in srgb, var(--s2) 60%, var(--s1)); --text-size: 20px; }
