@@ -1,8 +1,10 @@
 """Discover rule metadata and build approved live or isolated measuring packs."""
 
 import ast
+import hashlib
 import importlib.util
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -31,14 +33,18 @@ def _discover(directory):
         meta = RuleMeta.model_validate(json.loads(path.with_suffix(".meta.json").read_text(encoding="utf-8")))
         if meta.id != rule_id or rule_id in rules:
             raise ValueError(f"Duplicate or mismatched rule id: {rule_id}")
-        spec = importlib.util.spec_from_file_location(f"rules.{path.stem}", path)
+        location = hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()[:16]
+        spec = importlib.util.spec_from_file_location(f"rules._loaded_{path.stem}_{location}", path)
         module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
         spec.loader.exec_module(module)
         for name, expected in (("FAMILY", meta.family), ("ORIGIN", meta.origin),
                                ("ANCHORS", meta.anchors), ("LAW_SPAN", meta.law_span),
                                ("PRECEDENCE", meta.precedence)):
             if module.__dict__[name] != expected:
                 raise ValueError(f"Rule/meta mismatch: {rule_id}.{name}")
+        if not {"check", "check_session"} & module.__dict__.keys():
+            raise ValueError(f"Rule has no check function: {rule_id}")
         rules[rule_id] = RuleInfo(rule_id, module, meta)
     return rules
 

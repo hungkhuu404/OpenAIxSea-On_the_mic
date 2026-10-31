@@ -98,6 +98,14 @@ def test_candidate_path_with_spaces(registry, tmp_path, monkeypatch):
         registry.load_pack(["R09"], candidate_dir=candidate)
 
 
+def test_rule_may_use_dataclasses(registry, tmp_path):
+    path = write_rule(tmp_path, "R04")
+    path.write_text('from __future__ import annotations\nfrom dataclasses import dataclass\n'
+                    '@dataclass\nclass Marker:\n    text: str\n' + path.read_text(encoding="utf-8"),
+                    encoding="utf-8")
+    assert registry._discover(tmp_path)["R04"].module.Marker("test").text == "test"
+
+
 def test_bad_pack_inputs(registry, tmp_path, monkeypatch):
     write_rule(tmp_path, "R04")
     use_directory(monkeypatch, registry, tmp_path)
