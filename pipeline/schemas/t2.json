@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "entails": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "permitted_id": {"type": "string"},
+          "entails": {"type": "boolean"},
+          "evidence_span": {"type": "string"}
+        },
+        "required": ["permitted_id", "entails", "evidence_span"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["entails"],
+  "additionalProperties": false
+}
