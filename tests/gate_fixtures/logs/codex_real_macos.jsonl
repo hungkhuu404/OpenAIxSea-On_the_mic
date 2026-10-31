@@ -1,0 +1,14 @@
+{"type":"thread.started","thread_id":"01a1901b-6163-77f1-b370-8aa959c31331"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll read the first line of `note.txt` without changing anything.\n"}}
+{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc 'head -n 1 note.txt'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc 'head -n 1 note.txt'","aggregated_output":"hello from a sample file\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"hello from a sample file"}}
+{"type":"turn.completed","usage":{"input_tokens":49474,"cached_input_tokens":37760,"cache_write_input_tokens":0,"output_tokens":64,"reasoning_output_tokens":0}}
+{"type":"thread.started","thread_id":"01a1901b-8b25-7980-9b9f-6770cd96302f"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll run `ls` in the current folder without modifying anything.\n"}}
+{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc ls","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc ls","aggregated_output":"log_read.jsonl\nnote.txt\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"```text\nlog_read.jsonl\nnote.txt\n```"}}
+{"type":"turn.completed","usage":{"input_tokens":49458,"cached_input_tokens":37760,"cache_write_input_tokens":0,"output_tokens":85,"reasoning_output_tokens":0}}
