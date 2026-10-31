@@ -135,22 +135,27 @@ def process_session(session_id, purpose, reprocess=False, *, cache_read=True) ->
     if purpose not in ("live", "shadow"):
         raise ValueError("Stored sessions require purpose live or shadow")
     import ledger
+    from pipeline.dossier_events import _mark_recalled, _recall_state
     from pipeline.llm import run_scope
 
     stored = _snapshot(ledger.get_session(session_id))
     if stored.verdicts and not reprocess:
         return _summarize_existing(stored)
     pack, version = _live_pack()
+    recalls = _recall_state()
     events = []
     with run_scope(local_writes=not cache_read):
         computed = _compute(stored.session, pack, version, purpose,
                             lambda kind, payload: events.append((kind, payload)), cache_read)
+    _mark_recalled(computed.session, computed.verdicts, recalls)
     with ledger.transaction():
         stored = _snapshot(ledger.get_session(session_id))
         if stored.verdicts and not reprocess:
             return _summarize_existing(stored)
         if ledger.current_pack().version != version:
             raise ValueError("Rule pack changed during computation; process the session again")
+        if _recall_state() != recalls:
+            raise ValueError("Recall state changed during computation; process the session again")
         if reprocess:
             ledger.replace_atoms(session_id, computed.atoms)
         else:
@@ -228,7 +233,8 @@ class ReplayBatch(list[ReplayResult]):
         self.changed_atoms = 0
 
 
-def replay(targets, pack=None, persist=False, purpose="live", pack_version=None) -> ReplayBatch:
+def replay(targets, pack=None, persist=False, purpose="live", pack_version=None, *,
+           _on_persist=None) -> ReplayBatch:
     """Cache-only replay. Explicit in-memory, nonpersisting cases avoid ledger I/O.
 
     Session ids read the ledger. Persistence requires an approved live pack
@@ -245,6 +251,11 @@ def replay(targets, pack=None, persist=False, purpose="live", pack_version=None)
         raise ValueError("Only a live pack with purpose live may persist")
     if persist and any(not rule.meta.approved_by for rule in (*pack.active, *pack.quarantined)):
         raise ValueError("Only an approved live pack may persist")
+    recalls = None
+    if persist or any(isinstance(target, str) for target in targets):
+        from pipeline.dossier_events import _mark_recalled, _recall_state
+
+        recalls = _recall_state()
     computed = []
     originals = []
     with run_scope(offline=True, measuring=not persist):
@@ -260,7 +271,10 @@ def replay(targets, pack=None, persist=False, purpose="live", pack_version=None)
                     stored = ledger.get_session(session.session_id)
             if persist:
                 originals.append(stored.model_dump() if stored is not None else None)
-            computed.append(_compute(session, pack, version, purpose))
+            item = _compute(session, pack, version, purpose)
+            if recalls is not None:
+                _mark_recalled(session, item.verdicts, recalls)
+            computed.append(item)
     results = ReplayBatch(_replay_result(item) for item in computed)
     if persist:
         import ledger
@@ -273,6 +287,8 @@ def replay(targets, pack=None, persist=False, purpose="live", pack_version=None)
                 if (stored.model_dump() if stored is not None else None) != original:
                     raise ValueError("Session changed during replay; replay the session again")
                 stored_sessions.append(stored)
+            if _recall_state() != recalls:
+                raise ValueError("Recall state changed during replay; replay again")
             pending = []
             sessions = []
             for item, result, stored in zip(computed, results, stored_sessions, strict=True):
@@ -304,7 +320,9 @@ def replay(targets, pack=None, persist=False, purpose="live", pack_version=None)
                 ids = ledger.append_verdicts(pending)
                 for verdict, verdict_id in zip(pending, ids, strict=True):
                     verdict.verdict_id = verdict_id
-        results.changed_atoms = len(pending)
+            results.changed_atoms = len(pending)
+            if _on_persist is not None:
+                _on_persist(results)
         logger.info("backfill changed_cases=%s changed_atoms=%s",
                     results.changed_cases, results.changed_atoms)
     return results
