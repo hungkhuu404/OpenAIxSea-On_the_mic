@@ -1,8 +1,4 @@
-"""Command-line ingest, processing, cache warming and routing traces.
-
-Shadow call/hit/error counters are blocked on an LLM observation contract;
-the summary says unavailable instead of estimating backend activity.
-"""
+"""Command-line ingest, processing, cache warming and routing traces."""
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -42,6 +38,10 @@ def _parser():
                         const=paths.REPO_ROOT / "tests" / "demo" / "pr1_sentences.json")
     case = sub.add_parser("case")
     case.add_argument("--id", required=True)
+    repeat = sub.add_parser("judge-repeat")
+    repeat.add_argument("--session", required=True)
+    repeat.add_argument("--turn", required=True)
+    repeat.add_argument("--n", type=int, required=True)
     return parser
 
 
@@ -128,19 +128,36 @@ def _warm(session, pack, s1_only):
 
 
 def _shadow(args):
+    from pipeline.llm import observe_results
+
     _check_backend()
     started = monotonic()
     sessions = _shadow_targets(args)
     pack = _v1_pack()
-    with ThreadPoolExecutor(max_workers=settings.LLM_PARALLEL) as pool:
-        futures = [pool.submit(copy_context().run, _warm, session, pack, args.s1_only)
-                   for session in sessions]
-        for future in futures:
-            future.result()
-    print(f"targets={len(sessions)} calls_made=unavailable cache_hits=unavailable "
-          f"offline_misses=unavailable errors=unavailable elapsed_s={monotonic() - started:.3f}")
-    print("Call counters need an owner-confirmed LLM observation interface.", file=sys.stderr)
-    return 2
+    with observe_results() as results:
+        with ThreadPoolExecutor(max_workers=settings.LLM_PARALLEL) as pool:
+            futures = [pool.submit(copy_context().run, _warm, session, pack, args.s1_only)
+                       for session in sessions]
+            for future in futures:
+                future.result()
+    counts = _print_summary(results, started, targets=len(sessions))
+    return int(bool(counts["errors"] or counts["offline_misses"]))
+
+
+def _print_summary(results, started, *, targets=None):
+    counts = dict(calls_made=0, cache_hits=0, offline_misses=0, errors=0)
+    for result in results:
+        if result.cache_hit:
+            counts["cache_hits"] += 1
+        elif result.error is not None and result.error.kind == "off":
+            counts["offline_misses"] += 1
+        else:
+            counts["calls_made"] += 1
+            counts["errors"] += int(result.error is not None)
+    prefix = "" if targets is None else f"targets={targets} "
+    print(prefix + " ".join(f"{name}={value}" for name, value in counts.items())
+          + f" elapsed_s={monotonic() - started:.3f}")
+    return counts
 
 
 def _ensure_ledger():
@@ -180,47 +197,97 @@ def _case(case_id):
     _print_result(result)
 
 
+def _judge_repeat(args):
+    from dataclasses import asdict
+    from pydantic import BaseModel
+    import ledger
+    from pipeline.context import build_context
+    from pipeline.drafts import VerdictDraft
+    from pipeline.judge import judge
+    from pipeline.llm import observe_results, run_scope
+    from pipeline.router import axis_groups
+    from pipeline.runner import _live_pack
+
+    if args.n < 1:
+        raise ValueError("--n must be positive")
+    if not paths.ledger_db().is_file():
+        raise ValueError("judge-repeat requires an existing ledger")
+    session = ledger.get_session(args.session)
+    if session is None:
+        raise ValueError("Session not found")
+    if not any(turn.turn_id == args.turn for turn in session.turns):
+        raise ValueError("Turn not found")
+    atoms = [atom for atom in session.atoms if atom.turn_id == args.turn]
+    if not atoms:
+        raise ValueError("Turn has no stored atoms")
+    pack, _ = _live_pack()
+    ctx = build_context(session.sku_pin, session.as_of, pack)
+    started = monotonic()
+    with run_scope(measuring=True, local_writes=True), observe_results() as results:
+        for iteration in range(1, args.n + 1):
+            for atom in atoms:
+                draft = judge(atom, ctx.prompt_view(axis_groups(atom.axis)), ctx,
+                              "live", cache_read=False)
+                if isinstance(draft, VerdictDraft):
+                    draft = asdict(draft)
+                elif isinstance(draft, BaseModel):
+                    draft = draft.model_dump()
+                if draft["verdict"] == "red" or draft["decided_by"].startswith("rule:"):
+                    raise ValueError("Only code rules may decide red")
+                print(f"repeat={iteration} {session.session_id}:{atom.atom_id} "
+                      f"{draft['verdict']} {draft['decided_by']}")
+    counts = _print_summary(results, started)
+    return int(bool(counts["errors"] or counts["offline_misses"]))
+
+
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if isinstance(stream, io.TextIOWrapper):
             stream.reconfigure(encoding="utf-8")
     args = _parser().parse_args(argv)
     try:
+        from pipeline.llm import observe_results
+
+        print(config_line())
         if args.command == "shadow":
             return _shadow(args)
-        print(config_line())
         if args.command == "case":
             _case(args.id)
             return 0
+        if args.command == "judge-repeat":
+            return _judge_repeat(args)
         ledger = _ensure_ledger()
         from pipeline.runner import process_session
 
-        if args.command == "process":
-            result = process_session(args.session, args.purpose,
-                                     reprocess=args.reprocess or args.fresh,
-                                     cache_read=not args.fresh)
-            _print_result(result)
-        elif args.command == "kera":
-            from pipeline.ingest import from_reenactment
-
-            session = from_reenactment(paths.KERA_DIR / "reenactment_script.md", "kera", args.as_of)
-            stored = ledger.add_session(session)
-            _print_result(process_session(stored.session_id, "live", reprocess=args.reprocess))
-        else:
-            from pipeline.ingest import from_text
-
-            for text in args.file.read_text(encoding="utf-8").splitlines():
-                if not text.strip():
-                    continue
-                session = ledger.add_session(from_text(args.sku, args.as_of, text, args.source))
-                result = process_session(session.session_id, "live")
-                print(session.session_id)
+        started = monotonic()
+        with observe_results() as results:
+            if args.command == "process":
+                result = process_session(args.session, args.purpose,
+                                         reprocess=args.reprocess or args.fresh,
+                                         cache_read=not args.fresh)
                 _print_result(result)
-                for atom, verdict in zip(result.atoms, result.verdicts, strict=True):
-                    patterns = ", ".join(hit.pattern for hit in atom.near_hits)
-                    print(f"{verdict.atom_key} {verdict.verdict} "
-                          f"{verdict.reason_code or verdict.decided_by} near_hits={patterns}")
-        return 0
+            elif args.command == "kera":
+                from pipeline.ingest import from_reenactment
+
+                session = from_reenactment(paths.KERA_DIR / "reenactment_script.md", "kera", args.as_of)
+                stored = ledger.add_session(session)
+                _print_result(process_session(stored.session_id, "live", reprocess=args.reprocess))
+            else:
+                from pipeline.ingest import from_text
+
+                for text in args.file.read_text(encoding="utf-8").splitlines():
+                    if not text.strip():
+                        continue
+                    session = ledger.add_session(from_text(args.sku, args.as_of, text, args.source))
+                    result = process_session(session.session_id, "live")
+                    print(session.session_id)
+                    _print_result(result)
+                    for atom, verdict in zip(result.atoms, result.verdicts, strict=True):
+                        patterns = ", ".join(hit.pattern for hit in atom.near_hits)
+                        print(f"{verdict.atom_key} {verdict.verdict} "
+                              f"{verdict.reason_code or verdict.decided_by} near_hits={patterns}")
+        counts = _print_summary(results, started)
+        return int(bool(counts["errors"]))
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2

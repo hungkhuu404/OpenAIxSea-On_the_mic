@@ -9,6 +9,7 @@ import pytest
 from core.models import Atom, PermittedItem, RuleHit, Verdict
 from pipeline import router
 from pipeline.context import Context
+from pipeline.drafts import VerdictDraft
 from textnorm import match_key
 
 
@@ -22,18 +23,19 @@ def collaborators(monkeypatch):
     calls = []
 
     def finalize(draft, ctx, version):
+        assert isinstance(draft, dict)
         calls.append(("F", draft, version))
-        return Verdict(atom_key=draft.atom_key, rule_pack_version=version,
-                       verdict=draft.verdict, decided_by=draft.decided_by,
-                       reason_code=draft.reason_code, fired_rules=draft.fired_rules,
-                       permitted_id=draft.permitted_id, flags=draft.flags,
-                       evidence_span=draft.evidence_span, llm_call_ids=draft.llm_call_ids,
+        return Verdict(atom_key=draft["atom_key"], rule_pack_version=version,
+                       verdict=draft["verdict"], decided_by=draft["decided_by"],
+                       reason_code=draft["reason_code"], fired_rules=draft["fired_rules"],
+                       permitted_id=draft["permitted_id"], flags=draft["flags"],
+                       evidence_span=draft["evidence_span"], llm_call_ids=draft["llm_call_ids"],
                        as_of=ctx.as_of, dossier_hash=ctx.dossier_hash,
                        action="review", ts="2026-01-01T00:00:00Z")
 
     def judge(atom, items, ctx, purpose, cache_read=True):
         calls.append(("E", purpose, items, cache_read))
-        return router.Draft("green", "llm_votes", family="STANDARD",
+        return VerdictDraft("green", "llm_votes", family="STANDARD",
                             permitted_id=items[0]["permitted_id"])
 
     monkeypatch.setitem(sys.modules, "pipeline.guardrail", SimpleNamespace(finalize=finalize))
@@ -143,7 +145,7 @@ def test_allow_list_stops_rules_and_finalizes(collaborators):
     assert (result.verdict, result.decided_by, result.permitted_id) == (
         "green", "allow_list", "demo_sku:cong_dung:1")
     assert result.rule_pack_version == 7 and result.action == "review"
-    assert [(row[0], row[1].family) for row in collaborators] == [("F", "STANDARD")]
+    assert [(row[0], row[1]["family"]) for row in collaborators] == [("F", "STANDARD")]
 
 
 def test_code_rule_precedence_and_all_fired_rules(collaborators):
@@ -254,7 +256,7 @@ def test_one_event_for_every_atom_step(collaborators):
 
 def test_judge_cannot_produce_red(collaborators, monkeypatch):
     monkeypatch.setitem(sys.modules, "pipeline.judge", SimpleNamespace(
-        judge=lambda *args, **kwargs: router.Draft("red", "llm_votes", family="R04")))
+        judge=lambda *args, **kwargs: VerdictDraft("red", "llm_votes", family="R04")))
     with pytest.raises(ValueError, match="Only code rules"):
         route(atom("unequal claim"))
     assert collaborators == []
@@ -266,3 +268,48 @@ def test_source_and_caller_inputs_are_required(collaborators):
     with pytest.raises(ValueError, match="exact substring"):
         router.route_atom(atom(), context(), pack(), "live", session_id="fixture",
                           turn_text="other", rule_pack_version=3)
+
+
+def test_allow_list_real_h2_boundary():
+    from pipeline.context import build_context
+    from rules.registry import load_pack
+
+    rules = load_pack([], mode="measure")
+    ctx = build_context("kera", date(2025, 1, 8), rules)
+    item = ctx.P[4]
+    value = atom(item.text, axis="thanh_phan")
+    verdict = route(value, ctx, rules)
+    assert verdict.verdict == "green" and verdict.decided_by == "allow_list"
+    assert verdict.permitted_id == item.permitted_id
+    assert verdict.evidence_span in item.text
+    assert verdict.legal_basis == ["ND15-2018/D27/K2"]
+    assert verdict.law_span and verdict.action is None
+
+
+@pytest.mark.parametrize("shape", ["dataclass", "mapping", "model"])
+def test_judge_shapes_reach_real_h2(monkeypatch, shape):
+    from dataclasses import asdict
+    from pydantic import create_model
+
+    draft = VerdictDraft("yellow", "llm_votes", family="R05",
+                         closest_permitted_id=context().P[0].permitted_id)
+    if shape == "mapping":
+        draft = asdict(draft)
+    elif shape == "model":
+        draft = create_model("JudgeDraft", **{
+            key: (type(value), value) for key, value in asdict(draft).items()
+        })()
+    monkeypatch.setitem(sys.modules, "pipeline.judge", SimpleNamespace(
+        judge=lambda *args, **kwargs: draft))
+    verdict = route(atom("unequal claim"))
+    assert verdict.verdict == "yellow" and verdict.decided_by == "llm_votes"
+    assert verdict.legal_basis == ["LQC-2012/D8/K9", "ND15-2018/D27/K2"]
+
+
+@pytest.mark.parametrize("shape", [dict(verdict="red", decided_by="llm_votes", family="R04"),
+                                      dict(verdict="green", decided_by="rule:R04", family="STANDARD")])
+def test_mapping_judge_cannot_claim_code_authority(monkeypatch, shape):
+    monkeypatch.setitem(sys.modules, "pipeline.judge", SimpleNamespace(
+        judge=lambda *args, **kwargs: shape))
+    with pytest.raises(ValueError, match="Only code rules"):
+        route(atom("unequal claim"))

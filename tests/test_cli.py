@@ -12,7 +12,7 @@ import pytest
 from core import paths
 from core.config import settings
 from core.models import Atom, Session, Turn, Verdict
-from pipeline import cli
+from pipeline import cli, llm
 from pipeline.runner import SessionResult
 
 
@@ -45,11 +45,14 @@ def boundary(monkeypatch, tmp_path):
     root.mkdir()
     monkeypatch.setattr(paths, "REPO_ROOT", root)
     monkeypatch.setattr(paths, "CACHE_DIR", root / "cache" / "llm")
+    monkeypatch.setattr(paths, "LOCAL_DIR", root / ".local")
     monkeypatch.setattr(paths, "KERA_DIR", root / "data" / "demo" / "kera")
     monkeypatch.setattr(paths, "GOLDEN_CASES", root / "data" / "cases" / "golden.jsonl")
     monkeypatch.setattr(settings, "LEDGER_DB", str(root / ".local" / "ledger.db"))
     monkeypatch.setattr(settings, "EVAL_DIR", str(root / "eval"))
     monkeypatch.setattr(settings, "LLM_BACKEND", "codex")
+    monkeypatch.setattr(settings, "LLM_LOCAL_CACHE_DIR", str(root / ".local" / "cache"))
+    monkeypatch.setattr(settings, "OFFLINE", 0)
     monkeypatch.setattr(cli, "config_line", lambda: "cfg=synthetic")
     fake_pack = SimpleNamespace(mode="measure")
     monkeypatch.setattr(cli, "_v1_pack", lambda: fake_pack)
@@ -100,8 +103,9 @@ def test_kera_prints_one_line_per_turn_and_initializes_once(boundary, capsys):
     _, state = boundary
     assert cli.main(["kera", "--as-of", "2025-01-08"]) == 0
     lines = capsys.readouterr().out.splitlines()
-    assert lines == ["cfg=synthetic", "t01 abstain | t01.a1 abstain LLM_OFF",
-                     "t02 abstain | t02.a1 abstain LLM_OFF"]
+    assert lines[:3] == ["cfg=synthetic", "t01 abstain | t01.a1 abstain LLM_OFF",
+                         "t02 abstain | t02.a1 abstain LLM_OFF"]
+    assert lines[3].startswith("calls_made=0 cache_hits=0 offline_misses=0 errors=0 elapsed_s=")
     assert cli.main(["kera", "--as-of", "2025-01-08"]) == 0
     assert len(state.stored) == len(state.inits) == 1
     assert state.calls == [("kera-reenact-2025-01-08", "live", False, True)] * 2
@@ -154,16 +158,15 @@ def test_shadow_refuses_clip_and_never_touches_present_dir(boundary, monkeypatch
     assert not paths.ledger_db().exists()
 
 
-def test_shadow_s1_only_no_judge_or_negq_and_summary_marks_telemetry_gap(boundary, capsys):
+def test_shadow_s1_only_no_judge_or_negq_and_numeric_summary(boundary, capsys):
     _, state = boundary
-    assert cli.main(["shadow", "--kera", "--s1-only"]) == 2
+    assert cli.main(["shadow", "--kera", "--s1-only"]) == 0
     assert state.s1 == [("kera-reenact-2025-01-08", "t01", "shadow"),
                         ("kera-reenact-2025-01-08", "t02", "shadow")]
     assert state.warm == state.calls == state.inits == []
     captured = capsys.readouterr()
-    assert captured.out.startswith("targets=1 calls_made=unavailable cache_hits=unavailable")
-    assert "offline_misses=unavailable errors=unavailable elapsed_s=" in captured.out
-    assert "LLM observation interface" in captured.err
+    assert "targets=1 calls_made=0 cache_hits=0 offline_misses=0 errors=0 elapsed_s=" in captured.out
+    assert captured.err == ""
     assert not paths.ledger_db().exists()
 
 
@@ -172,13 +175,13 @@ def test_shadow_sentences_json_path_with_space(boundary, tmp_path):
     path = tmp_path / "constructed sentences.json"
     path.write_text(json.dumps(dict(sku_id="demo_sku", as_of="2025-01-08", source="Synthetic",
                                     sentences=["first", "second"])), encoding="utf-8")
-    assert cli.main(["shadow", "--sentences", str(path)]) == 2
+    assert cli.main(["shadow", "--sentences", str(path)]) == 0
     assert len(state.warm) == 2 and [p for _, p in state.warm] == ["shadow", "shadow"]
     assert state.inits == state.calls == [] and not paths.ledger_db().exists()
 
 
 def test_shadow_missing_sentence_fixture_prints_one_note(boundary, tmp_path, capsys):
-    assert cli.main(["shadow", "--sentences", str(tmp_path / "missing.json")]) == 2
+    assert cli.main(["shadow", "--sentences", str(tmp_path / "missing.json")]) == 0
     assert capsys.readouterr().out.count("note:") == 1
 
 
@@ -216,3 +219,72 @@ def test_v1_selection_uses_only_approved_active_law_compiled(boundary, monkeypat
     monkeypatch.setattr(rules.registry, "load_pack", lambda ids, **kw: calls.append((ids, kw)))
     _V1_PACK()
     assert calls == [(["keep"], {"mode": "measure"})]
+
+
+def test_shadow_counts_completed_batched_calls_hits_and_offline_misses(boundary, monkeypatch, capsys):
+    _, state = boundary
+    monkeypatch.setattr(llm, "_backend", lambda *args: llm._Transport(response={"ok": True}))
+    def warm(value, pack, s1_only):
+        requests = [dict(kind=kind, purpose="shadow", model="synthetic-" + kind,
+                         effort="none", schema_name="test_response",
+                         messages=[dict(role="user", content="synthetic batch")])
+                    for kind in ("s1", "t1", "t2", "negq")]
+        with llm.run_scope(measuring=True):
+            llm.map_calls(requests, parallel=4)
+    monkeypatch.setattr(cli, "_warm", warm)
+    assert cli.main(["shadow", "--kera"]) == 0
+    assert "calls_made=4 cache_hits=0 offline_misses=0 errors=0" in capsys.readouterr().out
+    monkeypatch.setattr(settings, "OFFLINE", 1)
+    assert cli.main(["shadow", "--kera"]) == 0
+    assert "calls_made=0 cache_hits=4 offline_misses=0 errors=0" in capsys.readouterr().out
+    for location in paths.CACHE_DIR.glob("*/*.json"):
+        location.unlink()
+    assert cli.main(["shadow", "--kera"]) == 1
+    assert "calls_made=0 cache_hits=0 offline_misses=4 errors=0" in capsys.readouterr().out
+    assert state.inits == [] and not paths.ledger_db().exists()
+
+
+def test_shadow_s1_only_observes_only_s1_results(boundary, monkeypatch, capsys):
+    monkeypatch.setattr(llm, "_backend", lambda *args: llm._Transport(response={"ok": True}))
+    def extract(value, turn, previous, ctx, purpose, cache_read=True):
+        llm.call("s1", purpose, "synthetic-s1", "none", "test_response",
+                 [dict(role="user", content=turn.turn_id)], cache_read=cache_read)
+        return []
+    monkeypatch.setitem(sys.modules, "pipeline.extract", SimpleNamespace(extract_atoms=extract))
+    with llm.observe_results() as results:
+        assert cli.main(["shadow", "--kera", "--s1-only"]) == 0
+    assert [result.kind for result in results] == ["s1", "s1"]
+    assert "calls_made=2 cache_hits=0 offline_misses=0 errors=0" in capsys.readouterr().out
+
+
+def test_shadow_reports_real_errors_and_nonzero_exit(boundary, monkeypatch, capsys):
+    monkeypatch.setattr(llm, "_backend", lambda *args: llm._Transport(
+        error=llm._error("timeout", "synthetic timeout")))
+    def warm(*args):
+        llm.call("s1", "shadow", "synthetic", "none", "test_response", [])
+    monkeypatch.setattr(cli, "_warm", warm)
+    assert cli.main(["shadow", "--kera"]) == 1
+    assert "calls_made=1 cache_hits=0 offline_misses=0 errors=1" in capsys.readouterr().out
+
+
+def test_shadow_does_not_swallow_collaborator_runtime_failure(boundary, monkeypatch):
+    def warm(*args):
+        raise RuntimeError("synthetic collaborator failure")
+    monkeypatch.setattr(cli, "_warm", warm)
+    with pytest.raises(RuntimeError, match="collaborator failure"):
+        cli.main(["shadow", "--kera"])
+
+
+def test_live_summary_counts_actual_results(boundary, monkeypatch, capsys):
+    _, state = boundary
+    state.stored["fixture"] = session("fixture")
+    monkeypatch.setattr(llm, "_backend", lambda *args: llm._Transport(response={"ok": True}))
+    def process(*args, **kwargs):
+        request = dict(kind="s1", purpose="shadow", model="synthetic", effort="none",
+                       schema_name="test_response", messages=[])
+        llm.call(**request)
+        llm.call(**request)
+        return result(state.stored["fixture"])
+    monkeypatch.setitem(sys.modules, "pipeline.runner", SimpleNamespace(process_session=process))
+    assert cli.main(["process", "--session", "fixture", "--purpose", "shadow"]) == 0
+    assert "calls_made=1 cache_hits=1 offline_misses=0 errors=0" in capsys.readouterr().out

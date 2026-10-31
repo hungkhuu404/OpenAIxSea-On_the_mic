@@ -1,4 +1,4 @@
-"""Runner invariants against explicit provisional ledger/H2/T4 adapters."""
+"""Runner invariants with synthetic extraction and transport collaborators."""
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -14,9 +14,12 @@ import pytest
 
 from core import paths
 from core.config import settings
+from core.enums import AtomFlag
 from core.models import Atom, Session, Turn, Verdict
+from ledger import SessionView
 from pipeline import llm, router, runner
 from pipeline.context import Context
+from pipeline.drafts import VerdictDraft
 
 
 def session(text="new claim", session_id="fixture"):
@@ -26,7 +29,7 @@ def session(text="new claim", session_id="fixture"):
 
 
 def pack(mode="live"):
-    return SimpleNamespace(mode=mode, check_atom=lambda view: [],
+    return SimpleNamespace(mode=mode, active=(), quarantined=(), check_atom=lambda view: [],
                            quarantined_hits=lambda view: [], check_session=lambda view, day: [])
 
 
@@ -50,9 +53,15 @@ class Ledger:
     def get_session(self, session_id):
         assert session_id == self.session.session_id
         keys = {f"{session_id}:{atom.atom_id}" for atom in self.atoms}
-        return self.session.model_dump() | dict(
-            atoms=self.atoms, verdicts=[v for v in self.latest_verdicts(session_id)
-                                       if v.atom_key in keys], flags=self.flags)
+        return SessionView(**(self.session.model_dump() | dict(
+            atoms=self.atoms, verdicts=[v for v in self.effective_verdicts(session_id)
+                                       if v.atom_key in keys], flags=self.flags)))
+
+    def effective_verdicts(self, session_id, pack_version=None):
+        version = 4 if pack_version is None else pack_version
+        keys = {f"{session_id}:{atom.atom_id}" for atom in self.atoms}
+        return list({v.atom_key: v for v in self.history
+                     if v.atom_key in keys and v.rule_pack_version <= version}.values())
 
     def latest_verdicts(self, session_id):
         return list({v.atom_key: v for v in self.history
@@ -61,13 +70,13 @@ class Ledger:
     @contextmanager
     def transaction(self):
         assert not self.in_transaction
-        before = deepcopy((self.atoms, self.history, self.flags, self.index))
+        before = deepcopy((self.atoms, self.history, self.flags, self.index, self.events))
         self.in_transaction = True
         self.transactions += 1
         try:
             yield
         except BaseException:
-            self.atoms, self.history, self.flags, self.index = before
+            self.atoms, self.history, self.flags, self.index, self.events = before
             raise
         finally:
             self.in_transaction = False
@@ -75,11 +84,14 @@ class Ledger:
     def add_atoms(self, session_id, atoms):
         assert self.in_transaction
         self.atoms.extend(deepcopy(atoms))
+        for atom in atoms:
+            self.index_atom(session_id, atom)
 
     def replace_atoms(self, session_id, atoms):
         assert self.in_transaction
-        self.atoms = deepcopy(atoms)
+        self.atoms = []
         self.index.clear()
+        self.add_atoms(session_id, atoms)
 
     def append_verdicts(self, verdicts):
         assert self.in_transaction
@@ -155,16 +167,17 @@ def boundary(monkeypatch, tmp_path):
         result = request("t1", value.span, purpose, cache_read)
         if result.error is not None:
             return router._abstain("LLM_OFF")
-        return router.Draft(state.colour, "llm_votes", family="STANDARD",
+        return VerdictDraft(state.colour, "llm_votes", family="STANDARD",
                             permitted_id=items[0]["permitted_id"], llm_call_ids=[result.request_sha256])
 
     def finalize(draft, ctx, version):
-        return Verdict(atom_key=draft.atom_key, rule_pack_version=version,
-                       verdict=draft.verdict, decided_by=draft.decided_by,
-                       reason_code=draft.reason_code, fired_rules=draft.fired_rules,
-                       permitted_id=draft.permitted_id, flags=draft.flags,
-                       legal_basis=["synthetic:" + draft.family] if draft.family else [],
-                       llm_call_ids=draft.llm_call_ids, as_of=ctx.as_of,
+        assert isinstance(draft, dict)
+        return Verdict(atom_key=draft["atom_key"], rule_pack_version=version,
+                       verdict=draft["verdict"], decided_by=draft["decided_by"],
+                       reason_code=draft["reason_code"], fired_rules=draft["fired_rules"],
+                       permitted_id=draft["permitted_id"], flags=draft["flags"],
+                       legal_basis=["synthetic:" + draft["family"]] if draft["family"] else [],
+                       llm_call_ids=draft["llm_call_ids"], as_of=ctx.as_of,
                        dossier_hash=ctx.dossier_hash, action="review", ts="2026-01-01T00:00:00Z")
 
     def build(sku, day, rules):
@@ -183,13 +196,6 @@ def boundary(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "pipeline.guardrail", SimpleNamespace(finalize=finalize))
     monkeypatch.setitem(sys.modules, "rules.nearhit", SimpleNamespace(detect=lambda view: []))
 
-    def aggregate(values):
-        rank = {"green": 0, "abstain": 1, "yellow": 2, "red": 3}
-        return max(values, key=rank.__getitem__, default="abstain")
-    monkeypatch.setitem(sys.modules, "pipeline.aggregate", SimpleNamespace(
-        turn_verdict=lambda values: aggregate([v.verdict for v in values]),
-        case_verdict=lambda values, flags: "red" if flags else aggregate(values),
-        case_decided_by=lambda values, flags: values[0].decided_by if values else "abstain:LLM_OFF"))
     monkeypatch.setitem(sys.modules, "pipeline.ingest", SimpleNamespace(
         from_eval_case=lambda row: session(row["text"], "case-" + row["case_id"])))
 
@@ -337,14 +343,14 @@ def test_transaction_rolls_back_partial_write(boundary, monkeypatch):
     with pytest.raises(RuntimeError, match="storage failure"):
         runner.process_session("fixture", "live")
     assert fake.atoms == fake.history == [] and fake.index == {}
-    assert all(kind == "step" for kind, _ in fake.events)
+    assert fake.events == []
 
 
 def test_backfill_only_changes_with_supersedes_and_old_flags(boundary, monkeypatch):
     _, state = boundary
     fake = install_ledger(monkeypatch, state)
     first = runner.process_session("fixture", "live")
-    fake.history[0].flags = ["RECALLED_AFTER"]
+    fake.history[0].flags = [AtomFlag.RECALLED_AFTER]
     unchanged, = runner.replay(["fixture"], persist=True)
     assert unchanged.status == "ok" and len(fake.history) == 1 and fake.transactions == 1
     state.colour = "yellow"
@@ -356,13 +362,34 @@ def test_backfill_only_changes_with_supersedes_and_old_flags(boundary, monkeypat
 
 
 def test_explicit_measure_pack_never_opens_ledger(boundary):
-    with pytest.raises(ValueError, match="cannot access the ledger"):
+    with pytest.raises(ValueError, match="Only a live pack"):
         runner.replay([], pack("measure"), persist=True, pack_version=1)
     with pytest.raises(ValueError, match="pack_version"):
         runner.run_cases([], "live", pack("measure"))
     with pytest.raises(ValueError, match="explicit pack"):
         runner.run_cases([], "oracle")
     assert not paths.ledger_db().exists()
+
+
+def test_successful_empty_s1_is_evaluated(boundary):
+    _, state = boundary
+    state.spans = []
+    result, = runner.run_cases([dict(case_id="empty", text="greeting")], "shadow", pack(), 1)
+    assert result.status == "ok" and result.verdicts == []
+    assert result.case_verdict is None and len(state.backend) == 1
+
+
+def test_successful_case_fallback_without_s1_id_is_evaluated(boundary, monkeypatch):
+    _, state = boundary
+    original = sys.modules["pipeline.extract"].extract_atoms
+    def extract(*args, **kwargs):
+        atoms = original(*args, **kwargs)
+        for atom in atoms:
+            atom.s1_call_id = None
+        return atoms
+    monkeypatch.setitem(sys.modules, "pipeline.extract", SimpleNamespace(extract_atoms=extract))
+    result, = runner.run_cases([dict(case_id="fallback", text="new claim")], "shadow", pack(), 1)
+    assert result.status == "ok" and result.verdicts[0].verdict == "green"
 
 
 def test_replay_scope_is_thread_local(boundary):

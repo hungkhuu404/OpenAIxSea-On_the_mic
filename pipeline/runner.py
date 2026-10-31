@@ -2,12 +2,6 @@
 
 These calls can block for minutes. App callers must use asyncio.to_thread or
 a background thread; never call them directly in a running event loop.
-
-Integration questions: the ledger snapshot adapter below assumes a flat
-mapping with Session fields plus atoms, verdicts and flags. H2 must confirm
-the aggregate signatures and the router.Draft shape. T4 must expose S1 call
-metadata: until then an empty extraction or a missing s1_call_id is treated
-as not_evaluated in replay, rather than claiming cache completeness.
 """
 
 from dataclasses import dataclass, field
@@ -37,15 +31,11 @@ class SessionResult:
 
 
 def _snapshot(row):
-    """Provisional P1 seam: flat session mapping, lists of core records."""
-    if not isinstance(row, dict) or not {"atoms", "verdicts", "flags"} <= row.keys():
-        raise TypeError("ledger.get_session snapshot shape needs P1 confirmation")
-    return SessionResult(
-        session=Session.model_validate(row),
-        atoms=[Atom.model_validate(item) for item in row["atoms"]],
-        verdicts=[Verdict.model_validate(item) for item in row["verdicts"]],
-        flags=[SessionFlag.model_validate(item) for item in row["flags"]],
-    )
+    """Consume ledger.SessionView, whose verdicts are the effective rows."""
+    if row is None:
+        raise ValueError("Session not found")
+    return SessionResult(session=row, atoms=list(row.atoms),
+                         verdicts=list(row.verdicts), flags=list(row.flags))
 
 
 def _live_pack():
@@ -76,6 +66,7 @@ def _compute(session, pack, version, purpose, emit=None, cache_read=True):
     from core.config import settings
     from pipeline.context import build_context
     from pipeline.router import _optional_module, _route_atom
+    from pipeline.llm import observe_results
 
     aggregate = import_module("pipeline.aggregate")
     result = SessionResult(session)
@@ -98,13 +89,14 @@ def _compute(session, pack, version, purpose, emit=None, cache_read=True):
             if not (settings.OFFLINE or settings.PUBLIC_MODE or settings.LLM_BACKEND == "off"):
                 raise ModuleNotFoundError("not ready: pipeline.extract", name="pipeline.extract")
             atoms = _fallback(turn)
+            s1_missing = True
         else:
-            atoms = extract.extract_atoms(session, turn, previous, ctx, purpose,
-                                          cache_read=cache_read)
-        # This conservative sentinel is provisional until T4 defines call metadata.
-        s1_missing = not atoms or any(atom.s1_call_id is None for atom in atoms)
+            with observe_results() as s1_results:
+                atoms = extract.extract_atoms(session, turn, previous, ctx, purpose,
+                                              cache_read=cache_read)
+            s1_missing = any(row.kind == "s1" and row.error is not None for row in s1_results)
         result.cache_missing |= s1_missing
-        step("S1", "unverified_cache" if s1_missing else "extracted", started, turn.turn_id)
+        step("S1", "cache_missing" if s1_missing else "extracted", started, turn.turn_id)
         turn_results = []
         for atom in atoms:
             routed = _route_atom(atom, ctx, pack, purpose, emit,
@@ -120,8 +112,8 @@ def _compute(session, pack, version, purpose, emit=None, cache_read=True):
         step("S3", str(result.turn_verdicts[turn.turn_id]), started, turn.turn_id)
         previous = turn
     result.case_verdict = aggregate.case_verdict(list(result.turn_verdicts.values()), result.flags)
-    # Provisional H2 signature; ReplayResult has no case_decided_by field.
-    result.case_decided_by = aggregate.case_decided_by(result.verdicts, result.flags)
+    result.case_decided_by = aggregate.case_decided_by(
+        list(result.turn_verdicts.values()), result.verdicts, result.flags)
     return result
 
 
@@ -132,6 +124,9 @@ def _summarize_existing(result):
                 if atom.turn_id == turn.turn_id}
         result.turn_verdicts[turn.turn_id] = aggregate.turn_verdict(
             [verdict for verdict in result.verdicts if verdict.atom_key in keys])
+    colours = list(result.turn_verdicts.values())
+    result.case_verdict = aggregate.case_verdict(colours, result.flags)
+    result.case_decided_by = aggregate.case_decided_by(colours, result.verdicts, result.flags)
     return result
 
 
@@ -140,14 +135,17 @@ def process_session(session_id, purpose, reprocess=False, *, cache_read=True) ->
     if purpose not in ("live", "shadow"):
         raise ValueError("Stored sessions require purpose live or shadow")
     import ledger
+    from pipeline.llm import run_scope
 
     stored = _snapshot(ledger.get_session(session_id))
-    # Latest rows include historical atom keys dropped by an earlier reprocess.
-    prior = {row.atom_key: row for row in ledger.latest_verdicts(session_id)}
+    prior = {row.atom_key: row for row in stored.verdicts}
     if prior and not reprocess:
         return _summarize_existing(stored)
     pack, version = _live_pack()
-    computed = _compute(stored.session, pack, version, purpose, ledger.append_event, cache_read)
+    events = []
+    with run_scope(local_writes=not cache_read):
+        computed = _compute(stored.session, pack, version, purpose,
+                            lambda kind, payload: events.append((kind, payload)), cache_read)
     for verdict in computed.verdicts:
         previous = prior.get(verdict.atom_key)
         verdict.supersedes = previous.verdict_id if previous is not None else None
@@ -159,22 +157,20 @@ def process_session(session_id, purpose, reprocess=False, *, cache_read=True) ->
         ids = ledger.append_verdicts(computed.verdicts)
         for verdict, verdict_id in zip(computed.verdicts, ids, strict=True):
             verdict.verdict_id = verdict_id
-        for turn in computed.session.turns:
-            ledger.index_turn(session_id, turn)
-        for atom in computed.atoms:
-            ledger.index_atom(session_id, atom)
         ledger.add_session_flags(session_id, computed.flags)
-    for atom, verdict in zip(computed.atoms, computed.verdicts, strict=True):
-        ledger.append_event("verdict", dict(
-            verdict_id=verdict.verdict_id, session_id=session_id, turn_id=atom.turn_id,
-            atom_id=atom.atom_id, verdict=str(verdict.verdict), decided_by=verdict.decided_by,
-            reason_code=str(verdict.reason_code) if verdict.reason_code else None))
-    for turn_id, verdict in computed.turn_verdicts.items():
-        ledger.append_event("turn.verdict", dict(session_id=session_id, turn_id=turn_id,
-                                                 verdict=str(verdict)))
-    for flag in computed.flags:
-        ledger.append_event("session.flag", dict(session_id=session_id, flag_code=str(flag.flag_code),
-                                                 rule_id=flag.rule_id, legal_basis=flag.legal_basis))
+        for kind, payload in events:
+            ledger.append_event(kind, payload)
+        for atom, verdict in zip(computed.atoms, computed.verdicts, strict=True):
+            ledger.append_event("verdict", dict(
+                verdict_id=verdict.verdict_id, session_id=session_id, turn_id=atom.turn_id,
+                atom_id=atom.atom_id, verdict=str(verdict.verdict), decided_by=verdict.decided_by,
+                reason_code=str(verdict.reason_code) if verdict.reason_code else None))
+        for turn_id, verdict in computed.turn_verdicts.items():
+            ledger.append_event("turn.verdict", dict(session_id=session_id, turn_id=turn_id,
+                                                     verdict=str(verdict)))
+        for flag in computed.flags:
+            ledger.append_event("session.flag", dict(session_id=session_id, flag_code=str(flag.flag_code),
+                                                     rule_id=flag.rule_id, legal_basis=flag.legal_basis))
     return computed
 
 
@@ -208,31 +204,42 @@ def run_cases(cases, purpose, pack=None, pack_version=None) -> list[ReplayResult
                 for case in cases]
 
 
-_CHANGED = ("verdict", "decided_by", "reason_code", "permitted_id", "fired_rules", "legal_basis")
+_CHANGED = ("verdict", "decided_by", "reason_code", "permitted_id", "closest_permitted_id",
+            "fired_rules", "legal_basis", "evidence_span", "law_span", "numbers",
+            "as_of", "dossier_hash", "flags", "qlnd_category", "action")
 
 
 def _changed(previous, current):
-    return any(previous.model_dump()[key] != current.model_dump()[key] for key in _CHANGED)
+    before, after = previous.model_dump(), current.model_dump()
+    return any(before[key] != after[key] for key in _CHANGED)
 
 
-def replay(targets, pack=None, persist=False, purpose="live", pack_version=None) -> list[ReplayResult]:
-    """Cache-only, with no ledger access for explicit in-memory packs.
+class ReplayBatch(list[ReplayResult]):
+    """Ordered core results plus local T7 persistence counts; core is unchanged."""
 
-    Explicit-pack persistence and explicit-pack session ids are rejected:
-    those requests cannot honor the contract's no-ledger guarantee.
-    Changed counts and case_decided_by need a ReplayResult contract extension.
+    def __init__(self, results):
+        super().__init__(results)
+        self.changed_cases = 0
+        self.changed_atoms = 0
+
+
+def replay(targets, pack=None, persist=False, purpose="live", pack_version=None) -> ReplayBatch:
+    """Cache-only replay. Explicit in-memory, nonpersisting cases avoid ledger I/O.
+
+    Session ids read the ledger. Persistence requires an approved live pack
+    and purpose live, and returns changed_cases/changed_atoms on ReplayBatch.
     """
     from pipeline.llm import run_scope
 
     targets = list(targets)
     explicit = pack is not None
-    if explicit and (persist or any(isinstance(target, str) for target in targets)):
-        raise ValueError("Explicit-pack replay cannot access the ledger; pass eval cases with persist=False")
     if purpose == "oracle" and (not explicit or persist or any(isinstance(t, str) for t in targets)):
         raise ValueError("Oracle replay requires an explicit pack and in-memory cases")
     pack, version = _select_pack(pack, pack_version)
     if persist and (pack.mode != "live" or purpose != "live"):
         raise ValueError("Only a live pack with purpose live may persist")
+    if persist and any(not rule.meta.approved_by for rule in (*pack.active, *pack.quarantined)):
+        raise ValueError("Only an approved live pack may persist")
     computed = []
     with run_scope(offline=True, measuring=not persist):
         for target in targets:
@@ -242,29 +249,45 @@ def replay(targets, pack=None, persist=False, purpose="live", pack_version=None)
             else:
                 session = _case_session(target)
             computed.append(_compute(session, pack, version, purpose))
-    results = [_replay_result(item) for item in computed]
+    results = ReplayBatch(_replay_result(item) for item in computed)
     if persist:
         import ledger
         pending = []
-        changed_cases = 0
+        sessions = []
         for item, result in zip(computed, results, strict=True):
             if result.status != "ok":
                 continue
-            prior = {row.atom_key: row for row in ledger.latest_verdicts(item.session.session_id)}
+            stored = ledger.get_session(item.session.session_id)
+            prior = {row.atom_key: row for row in ledger.effective_verdicts(
+                item.session.session_id, version)} if stored is not None else {}
             changed = []
             for verdict in item.verdicts:
                 previous = prior.get(verdict.atom_key)
+                if previous is not None:
+                    verdict.flags = list(dict.fromkeys([*previous.flags, *verdict.flags]))
                 if previous is None or _changed(previous, verdict):
                     if previous is not None:
                         verdict.supersedes = previous.verdict_id
-                        verdict.flags = list(dict.fromkeys([*previous.flags, *verdict.flags]))
                     changed.append(verdict)
-            changed_cases += bool(changed)
+            atoms_changed = stored is None or stored.atoms != item.atoms
+            flags_changed = stored is None or stored.flags != item.flags
+            results.changed_cases += bool(changed or atoms_changed or flags_changed)
             pending.extend(changed)
-        if pending:
+            if changed or atoms_changed or flags_changed:
+                sessions.append((item, stored, atoms_changed))
+        if sessions:
             with ledger.transaction():
+                for item, stored, atoms_changed in sessions:
+                    if stored is None:
+                        ledger.add_session(item.session)
+                        ledger.add_atoms(item.session.session_id, item.atoms)
+                    elif atoms_changed:
+                        ledger.replace_atoms(item.session.session_id, item.atoms)
+                    ledger.add_session_flags(item.session.session_id, item.flags)
                 ids = ledger.append_verdicts(pending)
                 for verdict, verdict_id in zip(pending, ids, strict=True):
                     verdict.verdict_id = verdict_id
-        logger.info("backfill changed_cases=%s changed_atoms=%s", changed_cases, len(pending))
+        results.changed_atoms = len(pending)
+        logger.info("backfill changed_cases=%s changed_atoms=%s",
+                    results.changed_cases, results.changed_atoms)
     return results

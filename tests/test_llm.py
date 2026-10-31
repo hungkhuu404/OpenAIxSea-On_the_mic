@@ -124,6 +124,73 @@ def test_scope_is_thread_local_and_preserves_environment(boundary):
     assert dict(os.environ) == before
 
 
+def test_observations_include_hits_offline_misses_and_errors_and_reset(boundary, monkeypatch):
+    with llm.observe_results() as observed:
+        first = llm.call(**request())
+        hit = llm.call(**request())
+        with llm.run_scope(offline=True):
+            missed = llm.call(**request(cache_read=False))
+        monkeypatch.setattr(llm, "_backend", lambda *args: llm._Transport(
+            error=llm._error("timeout", "synthetic timeout")))
+        failed = llm.call(**request(cache_read=False))
+    llm.call(**request())
+    assert observed == [first, hit, missed, failed]
+    assert [r.cache_hit for r in observed] == [False, True, False, False]
+    assert [r.error.kind if r.error else None for r in observed] == [None, None, "off", "timeout"]
+
+
+def test_observations_copy_into_batches_but_isolate_independent_threads(boundary):
+    with llm.observe_results() as outer:
+        with llm.run_scope(offline=True), llm.observe_results() as batch:
+            results = llm.map_calls([request(model=f"batch-{i}") for i in range(8)], parallel=4)
+        def independent():
+            with llm.observe_results() as own, llm.run_scope(offline=True):
+                result = llm.call(**request(model="independent"))
+            return own, result
+        with ThreadPoolExecutor(1) as pool:
+            own, other = pool.submit(independent).result()
+    assert len(outer) == len(batch) == 8
+    assert {r.request_sha256 for r in outer} == {r.request_sha256 for r in results}
+    assert own == [other] and other not in outer
+
+
+def test_fresh_scope_writes_only_local_cache_and_resets(boundary):
+    root, calls, records = boundary
+    original = llm.call(**request(purpose="shadow"))
+    committed = llm.cache_path(paths.CACHE_DIR, original.request_sha256)
+    before = committed.read_bytes()
+    with llm.run_scope(local_writes=True):
+        refreshed = llm.call(**request(purpose="shadow", cache_read=False))
+        new = llm.call(**request(purpose="shadow", model="fresh-only", cache_read=False))
+    assert refreshed.request_sha256 == original.request_sha256
+    assert committed.read_bytes() == before
+    assert llm.cache_path(root / ".local" / "cache", new.request_sha256).is_file()
+    assert not llm.cache_path(paths.CACHE_DIR, new.request_sha256).exists()
+    llm.call(**request(purpose="shadow", model="after-scope"))
+    assert len(list(paths.CACHE_DIR.glob("*/*.json"))) == 2
+
+
+def test_local_write_scope_does_not_redirect_an_independent_thread(boundary):
+    root, _, _ = boundary
+    with llm.run_scope(local_writes=True):
+        own = llm.call(**request(purpose="shadow", model="local-only"))
+        with ThreadPoolExecutor(1) as pool:
+            other = pool.submit(llm.call, **request(purpose="shadow", model="parallel-shadow")).result()
+    assert llm.cache_path(root / ".local" / "cache", own.request_sha256).exists()
+    assert not llm.cache_path(paths.CACHE_DIR, own.request_sha256).exists()
+    assert llm.cache_path(paths.CACHE_DIR, other.request_sha256).exists()
+
+
+def test_local_write_scope_does_not_promote_a_local_hit(boundary):
+    root, _, _ = boundary
+    original = llm.call(**request())
+    with llm.run_scope(local_writes=True):
+        hit = llm.call(**request(purpose="shadow"))
+    assert hit.cache_hit and hit.request_sha256 == original.request_sha256
+    assert not llm.cache_path(paths.CACHE_DIR, hit.request_sha256).exists()
+    assert llm.cache_path(root / ".local" / "cache", hit.request_sha256).exists()
+
+
 def test_event_loop_rejected_and_to_thread_copies_scope(boundary):
     async def check():
         with pytest.raises(RuntimeError, match="blocking: use acall"):

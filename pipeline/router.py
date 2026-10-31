@@ -1,13 +1,17 @@
 """Ordered S2 decisions. Legal text and final actions belong to guardrail."""
 
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass
 from importlib import import_module
 import json
 from time import monotonic
 
+from pydantic import BaseModel
+
 from core.config import settings
 from core.models import AtomView, Verdict
 from core.paths import REPO_ROOT
+from pipeline.drafts import VerdictDraft
 from textnorm import match_key, nfc
 
 
@@ -29,28 +33,6 @@ _NEGATION = ("không", "chẳng", "chưa", "đừng")
 
 
 @dataclass
-class Draft:
-    """Provisional judge/guardrail seam; H2 and T6 must confirm this shape.
-
-    The router supplies identity, dates and call ids before finalization.
-    Guardrail alone resolves family to legal text and fills the action.
-    """
-
-    verdict: str
-    decided_by: str
-    family: str | None = None
-    reason_code: str | None = None
-    atom_key: str = ""
-    fired_rules: list[str] = field(default_factory=list)
-    permitted_id: str | None = None
-    closest_permitted_id: str | None = None
-    evidence_span: str | None = None
-    numbers: object = None
-    llm_call_ids: list[str] = field(default_factory=list)
-    flags: list[str] = field(default_factory=list)
-
-
-@dataclass
 class RouteResult:
     verdict: Verdict
     negq_miss: int = 0
@@ -58,7 +40,7 @@ class RouteResult:
 
 
 def _abstain(reason, **fields):
-    return Draft("abstain", f"abstain:{reason}", reason_code=reason, **fields)
+    return VerdictDraft("abstain", f"abstain:{reason}", reason_code=reason, **fields)
 
 
 def axis_groups(axis):
@@ -136,8 +118,7 @@ def route_atom(atom, ctx, pack, purpose, emit=None, *, session_id,
                turn_text, rule_pack_version, cache_read=True) -> Verdict:
     """Route one atom, requiring the identity/context absent from core.Atom.
 
-    The five positional arguments remain unchanged. The three required
-    keywords are an explicit contract question, not inferred model fields.
+    Identity, source text and pack version are explicit keyword-only inputs.
     """
     return _route_atom(atom, ctx, pack, purpose, emit, session_id=session_id,
                        turn_text=turn_text, rule_pack_version=rule_pack_version,
@@ -187,7 +168,7 @@ def _route_atom(atom, ctx, pack, purpose, emit=None, *, session_id,
 
     started = monotonic()
     permitted_id = _allow_item(key, items)
-    draft = (Draft("green", "allow_list", family="STANDARD", permitted_id=permitted_id)
+    draft = (VerdictDraft("green", "allow_list", family="STANDARD", permitted_id=permitted_id)
              if permitted_id is not None else None)
     event("A", "green" if draft else "continue", started)
 
@@ -209,7 +190,7 @@ def _route_atom(atom, ctx, pack, purpose, emit=None, *, session_id,
         elif hits:
             hits.sort(key=lambda hit: (hit.precedence, hit.rule_id))
             deciding = hits[0]
-            draft = Draft("red", f"rule:{deciding.rule_id}", family=deciding.family,
+            draft = VerdictDraft("red", f"rule:{deciding.rule_id}", family=deciding.family,
                           fired_rules=list(dict.fromkeys(hit.rule_id for hit in hits)),
                           evidence_span=deciding.matched)
         elif pack.quarantined_hits(view):
@@ -236,8 +217,12 @@ def _route_atom(atom, ctx, pack, purpose, emit=None, *, session_id,
         judged = (_abstain("LLM_OFF") if judge is None else
                   judge.judge(atom, ctx.prompt_view(groups), ctx, purpose,
                               cache_read=cache_read))
-        if not isinstance(judged, Draft):
-            raise TypeError("Judge/guardrail Draft shape needs owner confirmation")
+        if isinstance(judged, BaseModel):
+            judged = judged.model_dump()
+        if isinstance(judged, Mapping):
+            judged = VerdictDraft(**judged)
+        if not isinstance(judged, VerdictDraft):
+            raise TypeError("Judge must return VerdictDraft, Mapping or BaseModel")
         if judged.verdict == "red" or judged.decided_by.startswith("rule:"):
             raise ValueError("Only code rules may decide red")
         e_miss = judged.reason_code == "LLM_OFF"
@@ -253,6 +238,6 @@ def _route_atom(atom, ctx, pack, purpose, emit=None, *, session_id,
     draft.llm_call_ids = list(dict.fromkeys([*draft.llm_call_ids, *call_ids]))
     started = monotonic()
     guardrail = import_module("pipeline.guardrail")
-    verdict = guardrail.finalize(draft, ctx, rule_pack_version)
+    verdict = guardrail.finalize(asdict(draft), ctx, rule_pack_version)
     event("F", str(verdict.verdict), started)
     return RouteResult(verdict, negq_miss, e_miss)
