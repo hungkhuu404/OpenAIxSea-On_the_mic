@@ -1,13 +1,12 @@
 """Offline behavioural checks for a single proposed rule, without live writes."""
 
-from datetime import date
 import json
 from pathlib import Path
 import re
 
 from core import paths
 from core.enums import ErrorScale, Verdict
-from core.models import AtomView, ClusterFile, GateCheck, GateResult, RegressionItem, RuleMeta, Session, Turn
+from core.models import AtomView, ClusterFile, GateCheck, GateResult, RegressionItem, RuleMeta
 
 
 CACHE_MISS = "cache miss: run python -m pipeline.cli shadow"
@@ -50,7 +49,7 @@ def _packs(rule_id, candidate_dir, ci):
         active = [r.rule_id for r in registry.all_rules()
                   if r.meta.approved_by and r.meta.status == "active"
                   and r.rule_id != rule_id]
-        quarantined, version = [], None
+        quarantined, version = [], 0
     else:
         if not paths.ledger_db().is_file():
             raise ValueError("LEDGER_DB must name an existing ledger file")
@@ -108,15 +107,10 @@ def _candidate_hits(case, pack):
     """Use the same cached S1 inputs, including code-verified speaker roles."""
     from pipeline.context import build_context
     from pipeline.extract import extract_atoms
-    from textnorm import match_key, nfc
+    from pipeline.ingest import from_eval_case
+    from textnorm import match_key
 
-    text = nfc(case["text"])
-    session = Session(session_id=f"case-{case['case_id']}", sku_pin=case["sku_id"],
-                      as_of=date.fromisoformat(case["as_of"]),
-                      channel="written" if case.get("modality") == "written" else "livestream",
-                      source="Rule behaviour measurement",
-                      turns=[Turn(turn_id="t01", speaker_label="[unidentified]",
-                                  attribution="not_applicable", text=text)])
+    session = from_eval_case(case)
     ctx = build_context(session.sku_pin, session.as_of, pack=pack)
     turn = session.turns[0]
     atoms = extract_atoms(session, turn, None, ctx, purpose="live", cache_read=True)

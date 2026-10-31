@@ -3,6 +3,8 @@
 import importlib
 import json
 from pathlib import Path
+import sys
+from types import ModuleType
 
 import pytest
 
@@ -58,7 +60,7 @@ def test_measure_runner_never_writes_live_verdicts(temporary_rules, monkeypatch)
         monkeypatch.setattr(ledger, name, forbidden)
     pack = registry.load_pack(["R04x", "R04y"], mode="measure")
     case = dict(case_id="synthetic", sku_id="demo_sku", as_of="2025-01-08",
-                source_date="2025-01-08", text="A demo trigger claim.",
+                source_date="2025-01-08", text="An ordinary synthetic claim.",
                 label="red", rule_ids=["R04"])
     runner.run_cases([case], purpose="live", pack=pack, pack_version=1)
     assert not paths.ledger_db().exists()
@@ -132,7 +134,7 @@ def test_llm_votes_cannot_produce_red(monkeypatch, target, mode, t1, found, negq
                          source_field="permitted_claims[0].text")
     ctx = Context(sku_id="demo_sku", category_norm="thuc_pham_bo_sung", as_of="2026-10-21",
                   dossier_state="PRESENT", P=[item], dossier_hash="synthetic")
-    text = "A broader synthetic benefit."
+    text = "không cần sản phẩm khác cho synthetic benefit."
     atom = Atom(atom_id="t01.a1", turn_id="t01", span=text, start=0, end=len(text),
                 axis="cong_dung", speaker_role="khong_ro", subject_is_product=True)
 
@@ -151,7 +153,25 @@ def test_llm_votes_cannot_produce_red(monkeypatch, target, mode, t1, found, negq
     if target == "pipeline.judge":
         result = module.judge(atom, [item], ctx, purpose="shadow", cache_read=True)
     else:
+        from pipeline.drafts import VerdictDraft
+
+        def judge(*args, **kwargs):
+            # Fake E only; exercise the real router and F with every vote tuple.
+            if mode == "off":
+                return VerdictDraft("abstain", "abstain:LLM_OFF", reason_code="LLM_OFF")
+            if t1 == "supported" and found:
+                return VerdictDraft("green", "llm_votes", family="STANDARD",
+                                    permitted_id=item.permitted_id, evidence_span=item.text)
+            if t1 in ("beyond_scope", "contradicts") and not found:
+                return VerdictDraft("yellow", "llm_votes", family="R05")
+            reason = "LLM_NEI" if t1 == "not_enough_info" else "VOTES_SPLIT"
+            return VerdictDraft("abstain", f"abstain:{reason}", reason_code=reason)
+
+        fake_judge = ModuleType("pipeline.judge")
+        fake_judge.judge = judge
+        monkeypatch.setitem(sys.modules, "pipeline.judge", fake_judge)
         result = module.route_atom(atom, ctx, registry.RuntimePack((), (), "live"),
-                                   purpose="shadow", emit=None)
+                                   purpose="shadow", emit=None, session_id="synthetic",
+                                   turn_text=text, rule_pack_version=0, cache_read=True)
     verdict = result["verdict"] if isinstance(result, dict) else result.verdict
     assert verdict != "red"

@@ -10,7 +10,7 @@ import pytest
 
 from core import paths
 from core.config import set_override
-from core.models import Atom, ReplayResult
+from core.models import Atom, LLMCall, ReplayResult
 from gate import behaviour as b
 
 
@@ -51,6 +51,8 @@ def env(monkeypatch, tmp_path):
     runner = ModuleType("pipeline.runner")
     runner.replay, runner.run_cases = replay, run_cases
     monkeypatch.setitem(sys.modules, "pipeline.runner", runner)
+    import pipeline
+    monkeypatch.setattr(pipeline, "runner", runner, raising=False)
 
     def hits(case, pack):
         assert pack is candidate_pack
@@ -185,7 +187,7 @@ def test_cluster_must_match_frozen_items(env, field, value):
     assert "differs from its frozen cluster" in run(env, sources=env.cluster).error_lines[0]
 
 
-def test_memory_uses_configured_path_and_own_date(env):
+def test_memory_uses_configured_path_and_passes_recorded_date(env):
     path = paths.regressions_file()
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(dict(item_id="memory", level="case", text="A synthetic memory claim.",
@@ -280,6 +282,8 @@ def test_candidate_probe_uses_own_pack_and_verified_atom(monkeypatch):
 
 
 def test_missing_runner_propagates(env, monkeypatch):
+    import pipeline
+    monkeypatch.delattr(pipeline, "runner", raising=False)
     monkeypatch.setitem(sys.modules, "pipeline.runner", None)
     with pytest.raises(ModuleNotFoundError, match="pipeline.runner"):
         run(env)
@@ -315,3 +319,75 @@ def test_ci_gates_only_added_t5_rule_files(monkeypatch, tmp_path):
     assert [call[7] for call in calls[1:]] == ["R04x", "R09x"]
     assert all(call[:7] == [sys.executable, "-m", "gate.run", "--ci", "--base",
                              "origin/main", "--rule"] for call in calls[1:])
+
+
+def real_runner_fixture(monkeypatch, tmp_path, *, rule_id="R04x", firing=False, cached=True):
+    """Temporary synthetic S1 rows; no backend call or repository cache writes."""
+    from core.config import settings
+    from pipeline import extract, ingest, llm
+
+    monkeypatch.setattr(paths, "LOCAL_DIR", tmp_path / "local")
+    cache = tmp_path / "synthetic cache"
+    set_override("LLM_CACHE_DIR", str(cache))
+    def forbidden(*args, **kwargs):
+        pytest.fail("Synthetic integration must never call a backend")
+    monkeypatch.setattr(llm, "_backend", forbidden)
+    candidate = tmp_path / "candidate with spaces.and.dots"
+    (candidate / "rules").mkdir(parents=True)
+    source = (FIXTURES / "R04x.py").read_text(encoding="utf-8").replace('"R04x"', f'"{rule_id}"')
+    meta = json.loads((FIXTURES / "R04x.meta.json").read_text(encoding="utf-8"))
+    meta["id"] = rule_id
+    (candidate / "rules" / f"{rule_id}.py").write_text(source, encoding="utf-8")
+    (candidate / "rules" / f"{rule_id}.meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    text = "A demo trigger claim." if firing else "An ordinary synthetic claim."
+    case = dict(case_id="synthetic", sku_id="demo_sku", source_date="2025-01-08",
+                text=text, label="red", rule_ids=["R04"] if firing else ["R05"])
+    golden = tmp_path / "golden.jsonl"
+    golden.write_text(json.dumps(case) + "\n", encoding="utf-8")
+    monkeypatch.setattr(paths, "GOLDEN_CASES", golden)
+    if cached:
+        session = ingest.from_eval_case(case)
+        request = extract._request(session, session.turns[0], None, "live", True)
+        sha = llm._identity(settings.LLM_BACKEND, request["model"], request["effort"],
+                            "s1", llm._schema("s1"), request["messages"])
+        row = LLMCall(request_sha256=sha, kind="s1", purpose="live", backend=settings.LLM_BACKEND,
+            model=request["model"], effort=request["effort"], latency_ms=0,
+            ts="2026-10-31T00:00:00Z", response={"atoms": [dict(span=text, axis="cong_dung",
+                speaker_role="khong_ro", role_span=None, subject_is_product=True)]})
+        location = llm.cache_path(cache, sha)
+        location.parent.mkdir(parents=True)
+        location.write_text(row.model_dump_json(), encoding="utf-8")
+    return candidate
+
+
+def test_real_runner_and_router_without_live_ledger(monkeypatch, tmp_path):
+    candidate = real_runner_fixture(monkeypatch, tmp_path)
+    result = b.run_behaviour("R04x", candidate, ci=True)
+    assert result.passed and result.observed_changes == []
+    assert not paths.ledger_db().exists()
+
+
+def test_real_runner_and_router_measure_code_red_with_existing_family_id(monkeypatch, tmp_path):
+    candidate = real_runner_fixture(monkeypatch, tmp_path, rule_id="R04", firing=True)
+    result = b.run_behaviour("R04", candidate, ci=True)
+    assert result.passed
+    assert result.observed_changes == [dict(item_id="synthetic", before="abstain", after="red")]
+    assert not paths.ledger_db().exists()
+
+
+def test_real_candidate_hits_outside_labelled_family(monkeypatch, tmp_path):
+    candidate = real_runner_fixture(monkeypatch, tmp_path, rule_id="R04", firing=True)
+    case = json.loads(paths.GOLDEN_CASES.read_text(encoding="utf-8"))
+    case.update(label="yellow", rule_ids=["R05"])
+    paths.GOLDEN_CASES.write_text(json.dumps(case) + "\n", encoding="utf-8")
+    result = b.run_behaviour("R04", candidate, ci=True)
+    assert any(line.startswith("R04 check 10:") and "synthetic" in line
+               for line in result.error_lines)
+    assert not paths.ledger_db().exists()
+
+
+def test_real_runner_missing_cache_returns_only_shadow_line(monkeypatch, tmp_path):
+    candidate = real_runner_fixture(monkeypatch, tmp_path, cached=False)
+    result = b.run_behaviour("R04x", candidate, ci=True)
+    assert result.error_lines == [b.CACHE_MISS]
+    assert not paths.ledger_db().exists()
