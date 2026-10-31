@@ -1,6 +1,7 @@
 """Vietnamese matching keys, search folding, and source-preserving lookup."""
 
 from collections import defaultdict, deque
+from itertools import groupby
 import re
 import unicodedata
 
@@ -103,13 +104,17 @@ def _key_spans(s: str) -> tuple[str, list[tuple[int, int]]]:
 
 
 def match_key(s: str) -> tuple[str, list[int]]:
-    """Return an accent-preserving key and original character start indices.
+    """Return an accent-preserving key and original character indices.
 
-    Expanded teencode characters share their source token's start index. Use
-    locate for source ranges: it also retains composed marks and token endings.
+    Expanded teencode indices run from the token's first to last character.
+    Use locate for ranges: it also retains composed marks and complete tokens.
     """
     key, spans = _key_spans(s)
-    return key, [start for start, _ in spans]
+    offsets = []
+    for (start, end), shared in groupby(spans):
+        count = sum(1 for _ in shared)
+        offsets.extend(start + i * (end - start - 1) // max(count - 1, 1) for i in range(count))
+    return key, offsets
 
 
 def locate(span: str, text: str) -> tuple[int, int] | None:
