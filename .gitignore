@@ -1,0 +1,17 @@
+.local/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+*.zip
+*.mp4
+*.mov
+*.mkv
+*.wav
+*.m4a
+*.srt
+*.vtt
+present/
+slides/
+.pytest_cache/
