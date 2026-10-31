@@ -12,7 +12,7 @@ import pytest
 
 from core import paths
 from core.config import set_override
-from core.models import GateCheck, GateResult, Job
+from core.models import ClusterFile, ClusterRun, GateCheck, GateResult, Job, RuleMeta
 from loop import cli, draft
 
 
@@ -247,9 +247,26 @@ def test_repeat_with_real_allocator_opens_only_one_fake_pr(world, monkeypatch):
     assert all(row.status == "passed" for row in jobs)
     assert len(pushes) == len(prs) == 1
     assert jobs[0].pr_url and jobs[1].pr_url is None
+    restored = ClusterFile.model_validate_json(world["path"].read_text(encoding="utf-8"))
+    assert len(restored.runs) == 2
+    assert all(isinstance(run, ClusterRun) for run in restored.runs)
+    assert [run.result for run in restored.runs] == ["passed", "passed"]
     expected = dict(K=2, I=2, J=0, R=0)
     ledger.init_db(world["base"] / ".local/fresh.db")
     assert draft.funnel(world["digest"]) == expected
+
+
+def test_suffixed_rule_uses_registered_metadata_family(world, monkeypatch):
+    from rules import registry
+
+    meta = RuleMeta(id="R04b", family="R04", origin="t5", article_id="LDUOC-2016/D6",
+        anchors=["LDUOC-2016/D6/K15"], law_span="chữa bệnh", trigger="Synthetic family mapping.",
+        precedence=14, status="proposed")
+    info = registry.RuleInfo("R04b", ModuleType("synthetic_rule"), meta)
+    monkeypatch.setattr(registry, "all_rules", lambda: [info])
+    correction = world["source"] | dict(rule_ids=["R04b"])
+    assert draft._family([correction]) == "R04"
+    assert draft._family([correction, world["source"]]) == "R04"
 
 
 def test_default_never_pushes_or_calls_gh(world, monkeypatch):
