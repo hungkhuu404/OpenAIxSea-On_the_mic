@@ -1,0 +1,45 @@
+{
+  "job_id": "demo-job-1",
+  "kind": "draft_rule",
+  "rule_id": "R04_DEMO",
+  "branch": "rule/R04_DEMO-demo-job-1",
+  "cluster_key": "t5-95549eba",
+  "cluster_item_ids": [
+    "demo-item-1"
+  ],
+  "cluster_hash": "95549eba49f750a65188cd8626254e1d22d8abefb203b3696e2298dd7c8a32d4",
+  "status": "passed",
+  "pid": null,
+  "attempts": [
+    {
+      "attempt_no": 1,
+      "started": "2026-10-21T09:00:00Z",
+      "finished": "2026-10-21T09:01:00Z",
+      "gate_result": "fail",
+      "error_lines": [
+        "R04_DEMO check 4: synthetic negative example matched"
+      ],
+      "files_read": [
+        "rules/R04_DEMO.py",
+        "tests/test_R04_DEMO.py"
+      ],
+      "log_path": null
+    },
+    {
+      "attempt_no": 2,
+      "started": "2026-10-21T09:02:00Z",
+      "finished": "2026-10-21T09:03:00Z",
+      "gate_result": "pass",
+      "error_lines": [],
+      "files_read": [
+        "rules/R04_DEMO.py",
+        "tests/test_R04_DEMO.py"
+      ],
+      "log_path": null
+    }
+  ],
+  "pr_url": null,
+  "dry": true,
+  "config": "de000001",
+  "ts": "2026-10-21T09:00:00Z"
+}

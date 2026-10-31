@@ -1,0 +1,9 @@
+{"id": 1, "ts": "2026-10-21T09:00:01Z", "type": "step", "payload": {"session_id": "text-de000001", "turn_id": "t02", "atom_id": "t02.a1", "step": "S0", "outcome": "context_ready", "ms": 1}}
+{"id": 2, "ts": "2026-10-21T09:00:02Z", "type": "step", "payload": {"session_id": "text-de000001", "turn_id": "t02", "atom_id": "t02.a1", "step": "S1", "outcome": "atom_extracted", "ms": 1}}
+{"id": 3, "ts": "2026-10-21T09:00:03Z", "type": "step", "payload": {"session_id": "text-de000001", "turn_id": "t02", "atom_id": "t02.a1", "step": "A", "outcome": "no_match", "ms": 1}}
+{"id": 4, "ts": "2026-10-21T09:00:04Z", "type": "step", "payload": {"session_id": "text-de000001", "turn_id": "t02", "atom_id": "t02.a1", "step": "B", "outcome": "no_match", "ms": 1}}
+{"id": 5, "ts": "2026-10-21T09:00:05Z", "type": "step", "payload": {"session_id": "text-de000001", "turn_id": "t02", "atom_id": "t02.a1", "step": "C", "outcome": "near_hits_recorded", "ms": 1}}
+{"id": 6, "ts": "2026-10-21T09:00:06Z", "type": "step", "payload": {"session_id": "text-de000001", "turn_id": "t02", "atom_id": "t02.a1", "step": "D", "outcome": "ready", "ms": 1}}
+{"id": 7, "ts": "2026-10-21T09:00:07Z", "type": "step", "payload": {"session_id": "text-de000001", "turn_id": "t02", "atom_id": "t02.a1", "step": "E", "outcome": "yellow", "ms": 1}}
+{"id": 8, "ts": "2026-10-21T09:00:08Z", "type": "step", "payload": {"session_id": "text-de000001", "turn_id": "t02", "atom_id": "t02.a1", "step": "F", "outcome": "yellow", "ms": 1}}
+{"id": 9, "ts": "2026-10-21T09:00:09Z", "type": "step", "payload": {"session_id": "text-de000001", "turn_id": "t02", "atom_id": "t02.a1", "step": "S3", "outcome": "yellow", "ms": 1}}

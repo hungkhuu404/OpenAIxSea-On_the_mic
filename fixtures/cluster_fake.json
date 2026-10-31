@@ -1,0 +1,39 @@
+{
+  "name": "t5-95549eba",
+  "item_ids": [
+    "demo-item-1"
+  ],
+  "texts": [
+    "Demo hạt mây chữa bệnh viêm xoang."
+  ],
+  "labels": [
+    "red"
+  ],
+  "cluster_hash": "95549eba49f750a65188cd8626254e1d22d8abefb203b3696e2298dd7c8a32d4",
+  "created_at": "2026-10-21T09:00:00Z",
+  "commit": "65df901",
+  "runs": [
+    {
+      "job_id": "demo-job-1",
+      "rule_id": "R04_DEMO",
+      "branch": "rule/R04_DEMO-demo-job-1",
+      "started": "2026-10-21T09:00:00Z",
+      "attempts": [
+        {
+          "attempt_no": 1,
+          "gate_result": "fail",
+          "error_lines": [
+            "R04_DEMO check 4: synthetic negative example matched"
+          ]
+        },
+        {
+          "attempt_no": 2,
+          "gate_result": "pass",
+          "error_lines": []
+        }
+      ],
+      "result": "passed",
+      "pr_url": null
+    }
+  ]
+}

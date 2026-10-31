@@ -1,0 +1,67 @@
+[
+  {
+    "atom_id": "t01.a1",
+    "turn_id": "t01",
+    "span": "Demo hạt mây hỗ trợ cảm giác nhẹ bụng.",
+    "start": 0,
+    "end": 38,
+    "axis": "cong_dung",
+    "speaker_role": "kol",
+    "role_span": null,
+    "subject_is_product": true,
+    "near_hits": [],
+    "s1_call_id": null
+  },
+  {
+    "atom_id": "t01.a2",
+    "turn_id": "t01",
+    "span": "Demo hạt mây chữa bệnh viêm xoang.",
+    "start": 39,
+    "end": 73,
+    "axis": "cong_dung",
+    "speaker_role": "kol",
+    "role_span": null,
+    "subject_is_product": true,
+    "near_hits": [],
+    "s1_call_id": null
+  },
+  {
+    "atom_id": "t02.a1",
+    "turn_id": "t02",
+    "span": "Demo hạt mây hỗ trợ cảm giác nhẹ bụng suốt bảy ngày.",
+    "start": 0,
+    "end": 52,
+    "axis": "cong_dung",
+    "speaker_role": "kol",
+    "role_span": null,
+    "subject_is_product": true,
+    "near_hits": [],
+    "s1_call_id": null
+  },
+  {
+    "atom_id": "t02.a2",
+    "turn_id": "t02",
+    "span": "Demo hạt mây dùng cho trẻ bốn tuổi.",
+    "start": 53,
+    "end": 88,
+    "axis": "doi_tuong",
+    "speaker_role": "kol",
+    "role_span": null,
+    "subject_is_product": true,
+    "near_hits": [],
+    "s1_call_id": null
+  },
+  {
+    "atom_id": "t03.a1",
+    "turn_id": "t03",
+    "span": "Demo hạt mây có thành phần sương tím.",
+    "start": 0,
+    "end": 37,
+    "axis": "thanh_phan",
+    "speaker_role": "kol",
+    "role_span": null,
+    "subject_is_product": true,
+    "near_hits": [],
+    "s1_call_id": null
+  }
+]
