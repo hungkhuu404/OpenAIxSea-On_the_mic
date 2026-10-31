@@ -1,6 +1,6 @@
 """15. Thông tin, quảng cáo, tiếp thị, kê đơn, tư vấn, ghi nhãn, hướng dẫn sử dụng có nội dung dùng để phòng bệnh, chữa bệnh, chẩn đoán bệnh, điều trị bệnh, giảm nhẹ bệnh, điều chỉnh chức năng sinh lý cơ thể người đối với sản phẩm không phải là thuốc, trừ trang thiết bị y tế."""
 
-from rules._common import excluded_right, is_disclaimer, make_hit, negation_scope, syllable_matches
+from rules._common import disclaimer_spans, excluded_right, make_hit, negation_scope, syllable_matches
 
 RULE_ID = "R04"
 FAMILY = "R04"
@@ -16,13 +16,17 @@ ROOM_CONTEXT = ("viện", "nhân", "án", "xá")
 
 
 def check(atom_view):
-    if is_disclaimer(atom_view.text):
-        return []
+    disclaimers = disclaimer_spans(atom_view.text)
+    scope_text = atom_view.text
+    for start, end in disclaimers:
+        scope_text = scope_text[:start] + " " * (end - start) + scope_text[end:]
     hits = []
     for match in syllable_matches(atom_view.text, TRIGGERS):
+        if any(start <= match.start and match.end <= end for start, end in disclaimers):
+            continue
         if match.phrase == "phòng bệnh" and excluded_right(atom_view.text, match, ROOM_CONTEXT):
             continue
-        negated, ambiguous = negation_scope(atom_view.text, match.start, match.end)
+        negated, ambiguous = negation_scope(scope_text, match.start, match.end, affirmative_pairs=True)
         if not negated:
             hits.append(make_hit(RULE_ID, FAMILY, match.matched, ANCHORS[0], LAW_SPAN,
                                  PRECEDENCE, ambiguous_negation=ambiguous))

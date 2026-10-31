@@ -85,6 +85,69 @@ def test_expanded_syllables_keep_full_original_token(rule, phrase, expected):
     assert all(text[match.start:match.end] == match.matched for match in matches)
 
 
+@pytest.mark.parametrize("placement", ["before", "after", "both", "same_clause", "no_separator", "fuzzy"])
+@pytest.mark.parametrize("trigger", ["chữa khỏi", "chữa bệnh"])
+def test_disclaimer_does_not_hide_separate_assertion(rule, placement, trigger):
+    from rules._common import DISCLAIMER
+    claim = f"Sản phẩm {trigger} tiểu đường"
+    texts = {"before": f"{DISCLAIMER}. {claim}.", "after": f"{claim}. {DISCLAIMER}.",
+             "both": f"{DISCLAIMER}. {claim}. {DISCLAIMER}.", "same_clause": f"{DISCLAIMER}, {claim}.",
+             "no_separator": f"{DISCLAIMER} {claim}.",
+             "fuzzy": f"{DISCLAIMER.replace('Thực phẩm này', 'Thực phẩm')}. {claim}."}
+    hits = rule.check(atom(texts[placement]))
+    assert [hit.matched for hit in hits] == [trigger]
+    assert not hits[0].ambiguous_negation
+
+
+@pytest.mark.parametrize("layout", ["truncated", "interrupted"])
+def test_disclaimer_cannot_borrow_or_cover_a_separate_claim(rule, layout):
+    from rules._common import DISCLAIMER, disclaimer_spans
+    claim = "Sản phẩm chữa bệnh."
+    text = (DISCLAIMER.removesuffix(" chữa bệnh") + ". " + claim if layout == "truncated" else
+            "Thực phẩm này không phải là thuốc. " + claim + " Không có tác dụng thay thế thuốc chữa bệnh.")
+    hits = rule.check(atom(text))
+    assert [hit.matched for hit in hits] == ["chữa bệnh"]
+    assert not hits[0].ambiguous_negation
+    claim_start = text.index(claim)
+    assert all(end <= claim_start or start >= claim_start + len(claim)
+               for start, end in disclaimer_spans(text))
+
+
+@pytest.mark.parametrize("construction", ["không chỉ", "không những"])
+@pytest.mark.parametrize("continuation", ["mà còn", ", mà còn", ", giảm đau mà còn"])
+def test_not_only_is_affirmative(rule, construction, continuation):
+    hits = rule.check(atom(f"Sản phẩm {construction} chữa bệnh {continuation} giúp ngủ ngon."))
+    assert [hit.matched for hit in hits] == ["chữa bệnh"]
+    assert not hits[0].ambiguous_negation
+
+
+@pytest.mark.parametrize("text", [
+    "Sản phẩm không chữa bệnh.",
+    "Sản phẩm không chỉ không chữa bệnh mà còn gây khó ngủ.",
+    "Sản phẩm không những không chữa bệnh mà còn gây khó ngủ.",
+    "Sản phẩm không chỉ chữa bệnh. Mà còn giúp ngủ ngon.",
+])
+def test_real_negation_remains_exempt(rule, text):
+    assert rule.check(atom(text)) == []
+
+
+@pytest.mark.parametrize("prefix", ["Thực phẩm này", "Thực phẩm"])
+@pytest.mark.parametrize("separator", [" và ", ", ", ". ", "\n"])
+def test_disclaimer_alone_remains_exempt(rule, prefix, separator):
+    from rules._common import DISCLAIMER
+    text = DISCLAIMER.replace("Thực phẩm này", prefix).replace(" và ", separator)
+    assert rule.check(atom(text)) == []
+
+
+def test_extraction_negation_helper_keeps_default_behaviour():
+    from rules._common import negation_scope
+    text = "Sản phẩm không chỉ chữa bệnh mà còn giúp ngủ ngon."
+    start = len("Sản phẩm không chỉ ")
+    end = start + len("chữa bệnh")
+    assert negation_scope(text, start, end) == (True, False)
+    assert negation_scope(text, start, end, affirmative_pairs=True) == (False, False)
+
+
 def test_disclaimer_lcs(rule):
     from rules._common import is_disclaimer
     assert is_disclaimer("Thực phẩm không phải là thuốc và không có tác dụng thay thế thuốc chữa bệnh")
