@@ -3,6 +3,7 @@ import { request, setPresenter, loadSession, events } from './data.js';
 import { sessionView } from './session.js';
 import { presenterView } from './presenter.js';
 import { sentenceBox } from './preflight.js';
+import { reviewView } from './review.js';
 
 const app = document.querySelector('#app');
 const html = document.documentElement;
@@ -80,8 +81,9 @@ async function scene(root, number, backup, manifest) {
     } else if (number <= 4) {
       await showSession(root, number === 3 ? 'kera-reenact-2024-12-12' : 'kera-reenact-2025-01-08', manifest.translations);
     } else {
-      root.append(el('p', number === 5 ? 'Review workspace' : 'Merge workspace', 'notice'));
-      root.dispatchEvent(new CustomEvent('presenter-scene', { bubbles: true, detail: { scene: number, approver: manifest.present.approver } }));
+      const view = await reviewView({ approver: manifest.present.approver, target: manifest.present.pr1_third_target, focusPR2: number === 6 });
+      root.append(view.node);
+      stopEvents = events(false, event => { if (['queue.changed', 'job.started', 'job.finished', 'job.attempt', 'rule.merged', 'backfill.done', 'dossier.pending'].includes(event.type)) view.refresh(); });
     }
   } catch { root.append(el('p', 'This scene is unavailable until its session is prepared.', 'notice')); }
 }
@@ -104,6 +106,16 @@ async function route() {
     if (isPresenter) {
       presenter = await presenterView((...args) => { stopEvents(); scene(...args); });
       if (current === generation) app.append(presenter.node);
+    } else if (location.hash.startsWith('#/review')) {
+      let present = {};
+      if (!publicMode) {
+        try { present = (await request('/api/present/manifest')).present; } catch { /* Optional presenter defaults. */ }
+      }
+      const view = await reviewView({ publicMode, approver: present.approver, target: present.pr1_third_target });
+      if (current === generation) app.append(view.node);
+      stopEvents = events(publicMode, event => {
+        if (['queue.changed', 'job.started', 'job.finished', 'job.attempt', 'rule.merged', 'backfill.done', 'dossier.pending'].includes(event.type)) view.refresh();
+      });
     } else {
       app.append(el('h1', 'Session ledger'));
       const id = new URLSearchParams(location.hash.split('?')[1]).get('session');

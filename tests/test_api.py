@@ -78,6 +78,8 @@ def test_unreadable_names_and_routes(tmp_path):
         event_id = ledger.append_event("queue.changed", {})
         assert client.get("/api/events").json()[0]["id"] == event_id
         assert client.get("/api/events", params={"since": event_id}).json() == []
+        assert client.get("/api/queue").json() == []
+        assert ("GET", "/queue") not in STUB_ROUTES
         for (method, path), task in STUB_ROUTES.items():
             response = client.request(method, "/api" + path.replace("{id}", "synthetic"))
             assert response.status_code == 501
