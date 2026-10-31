@@ -46,9 +46,10 @@ def use_directory(monkeypatch, registry, directory):
 
 def test_discovery_matches_constant_and_meta(registry, tmp_path):
     write_rule(tmp_path, "R04", filename="different_name")
+    (tmp_path / "different_name.meta.json").rename(tmp_path / "metadata.meta.json")
     (tmp_path / "nearhit.py").write_text('raise RuntimeError("not a rule")\n', encoding="utf-8")
     assert list(registry._discover(tmp_path)) == ["R04"]
-    meta_path = tmp_path / "different_name.meta.json"
+    meta_path = tmp_path / "metadata.meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     meta["id"] = "R09"
     meta_path.write_text(json.dumps(meta), encoding="utf-8")

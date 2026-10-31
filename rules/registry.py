@@ -20,6 +20,12 @@ class RuleInfo:
 def _discover(directory):
     from core.models import RuleMeta
 
+    metadata = {}
+    for path in sorted(directory.glob("*.meta.json")):
+        meta = RuleMeta.model_validate(json.loads(path.read_text(encoding="utf-8")))
+        if meta.id in metadata:
+            raise ValueError(f"Duplicate metadata id: {meta.id}")
+        metadata[meta.id] = meta
     rules = {}
     for path in sorted(directory.glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -30,9 +36,9 @@ def _discover(directory):
         if not ids:
             continue
         rule_id, = ids
-        meta = RuleMeta.model_validate(json.loads(path.with_suffix(".meta.json").read_text(encoding="utf-8")))
-        if meta.id != rule_id or rule_id in rules:
+        if rule_id not in metadata or rule_id in rules:
             raise ValueError(f"Duplicate or mismatched rule id: {rule_id}")
+        meta = metadata[rule_id]
         location = hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()[:16]
         spec = importlib.util.spec_from_file_location(f"rules._loaded_{path.stem}_{location}", path)
         module = importlib.util.module_from_spec(spec)
