@@ -6,9 +6,16 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from core.paths import REPO_ROOT
+from core.paths import KERA_DIR
 from datetime import date
 
 router = APIRouter()
+
+
+@router.get("/api/ui/kera")
+def kera_dates():
+    dossier = json.loads((KERA_DIR / "dossier.json").read_text(encoding="utf-8"))
+    return {"recall_date": dossier["validity"]["recalled_on"]["value"]}
 
 
 @router.get("/api/ui/context")

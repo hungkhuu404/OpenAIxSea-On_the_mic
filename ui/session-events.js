@@ -7,7 +7,8 @@ export function watchSession(view, sessionId, {
   let stopped = false, refreshing = false, dirty = false;
   const unsubscribe = subscribe(publicMode, async event => {
     if (stopped || !active()) return;
-    const globalRefresh = event.type === 'backfill.done';
+    const globalRefresh = event.type === 'backfill.done' || (event.type === 'recall.applied'
+      && event.payload.sessions.some(row => row.session_id === sessionId));
     if (!globalRefresh && event.payload.session_id !== sessionId) return;
     view.event(event);
     if (!globalRefresh && !['verdict', 'turn.verdict', 'session.flag'].includes(event.type)) return;

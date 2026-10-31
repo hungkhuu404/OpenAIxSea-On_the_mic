@@ -64,7 +64,7 @@ export function events(publicMode, receive, failed = () => {}) {
     try { accept(JSON.parse(message.data)); } catch (error) { failed(error); }
   };
   stream.onmessage = parse;
-  for (const type of ['step', 'verdict', 'turn.verdict', 'session.flag', 'queue.changed', 'backfill.done']) {
+  for (const type of ['step', 'verdict', 'turn.verdict', 'session.flag', 'queue.changed', 'backfill.done', 'recall.applied']) {
     stream.addEventListener(type, message => {
       try {
         const row = JSON.parse(message.data);

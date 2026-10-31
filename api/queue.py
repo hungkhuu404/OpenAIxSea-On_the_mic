@@ -37,7 +37,9 @@ def ranked_queue():
               ("disease", 3, ("tiểu đường", "đái tháo đường", "ung thư", "gan", "thận", "huyết áp", "tim mạch", "mỡ máu", "gout", "xương khớp")),
               ("absolute", 2, ("hoàn toàn", "tuyệt đối", "100%", "khỏi hẳn", "dứt điểm"))]
     for session in ledger.list_sessions():
-        verdicts = {v.atom_key: v for v in ledger.effective_verdicts(session.session_id)}
+        if session.channel == "video":
+            continue
+        verdicts = {v.atom_key: v for v in session.verdicts}
         for atom in session.atoms:
             key = f"{session.session_id}:{atom.atom_id}"
             verdict = verdicts.get(key)
