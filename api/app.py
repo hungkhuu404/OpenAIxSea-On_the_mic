@@ -15,6 +15,7 @@ from core.paths import REPO_ROOT
 import ledger
 from api.present import router as present_router
 from api.ui import router as ui_router
+from api.review import DependencyNotReady, router as review_router
 from api.preflight import PublicRateLimit, router as preflight_router
 from api.public import ledger_lifespan
 
@@ -22,19 +23,7 @@ from api.public import ledger_lifespan
 STUB_ROUTES = {
     ("POST", "/sessions"): "P4",
     ("POST", "/sessions/{id}/process"): "P4",
-    ("GET", "/queue"): "P5",
-    ("POST", "/labels"): "P5",
-    ("POST", "/report-wrong"): "P5",
-    ("GET", "/jobs"): "P5",
-    ("GET", "/jobs/{id}"): "P5",
-    ("GET", "/rules"): "P5",
-    ("GET", "/rules/{id}"): "P5",
-    ("GET", "/rules/{id}/dryrun"): "P5",
-    ("POST", "/rules/{id}/merge"): "P5",
     ("POST", "/dossier-events/recall"): "P4",
-    ("POST", "/dossier-events/update"): "P5",
-    ("POST", "/pending/{id}/approve"): "P5",
-    ("GET", "/who-decided"): "P4",
 }
 
 
@@ -103,6 +92,7 @@ def create_app(public=False):
     app.include_router(preflight_router)
     app.include_router(present_router)
     app.include_router(ui_router)
+    app.include_router(review_router)
 
     @app.middleware("http")
     async def read_only_public(request, call_next):
@@ -115,9 +105,13 @@ def create_app(public=False):
                 return JSONResponse(status_code=404, content={"detail": "Not found"})
         return await call_next(request)
 
+    @app.exception_handler(DependencyNotReady)
+    async def review_not_ready(request, exc):
+        return JSONResponse({"todo": exc.module}, status_code=503)
+
     @app.exception_handler(ModuleNotFoundError)
     async def not_ready(request, exc):
-        if exc.name in {"textnorm", "rules.registry"}:
+        if request.url.path == "/api/search" and exc.name == "textnorm":
             return JSONResponse({"todo": exc.name}, status_code=503)
         raise exc
 
