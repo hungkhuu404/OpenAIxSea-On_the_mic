@@ -65,3 +65,28 @@ def test_clip_attribution_requires_presenter(assets):
     with TestClient(create_app()) as client:
         assert "speaker_line" not in client.get("/api/present/manifest").json()["clips"]["a1"]
         assert client.get("/api/present/manifest?presenter=1").json()["clips"]["a1"]["speaker_line"] == "Synthetic attribution"
+
+
+def test_law_display_uses_guardrail_fake(monkeypatch):
+    import sys
+    from types import ModuleType
+    fake = ModuleType("pipeline.guardrail")
+    fake.display_text = lambda anchor: "Filtered synthetic text: " + anchor
+    monkeypatch.setitem(sys.modules, "pipeline.guardrail", fake)
+    with TestClient(create_app()) as client:
+        response = client.get("/api/ui/law/SYNTHETIC/D1")
+        assert response.json() == {"display_text": "Filtered synthetic text: SYNTHETIC/D1"}
+
+
+def test_missing_guardrail_is_not_ready(monkeypatch):
+    import builtins
+    original = builtins.__import__
+    def missing(name, *args, **kwargs):
+        if name == "pipeline.guardrail":
+            raise ModuleNotFoundError(name=name)
+        return original(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, "__import__", missing)
+    with TestClient(create_app()) as client:
+        response = client.get("/api/ui/law/SYNTHETIC/D1")
+        assert response.status_code == 503
+        assert response.json() == {"todo": "pipeline.guardrail"}

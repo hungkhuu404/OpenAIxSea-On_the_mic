@@ -6,8 +6,20 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from core.paths import REPO_ROOT
+from datetime import date
 
 router = APIRouter()
+
+
+@router.get("/api/ui/context")
+def context(sku_id: str, as_of: date):
+    try:
+        from pipeline.context import build_context
+    except ModuleNotFoundError as error:
+        if error.name != "pipeline.context":
+            raise
+        return JSONResponse(status_code=503, content={"todo": "pipeline.context"})
+    return build_context(sku_id, as_of).model_dump(mode="json")
 
 
 @router.get("/api/ui/fixture")

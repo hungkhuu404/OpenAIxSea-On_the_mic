@@ -47,7 +47,8 @@ async function showSession(root, id, translations = {}) {
         if (!root.isConnected) return;
         const next = sessionView(updated, translations);
         view.node.replaceWith(next.node); view = next;
-      } finally { refreshing = false; }
+      } catch { /* Keep the last confirmed evidence visible. */ }
+      finally { refreshing = false; }
     });
   }
 }

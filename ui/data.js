@@ -15,7 +15,17 @@ export async function fixtureSession() {
   return request('/api/ui/fixture');
 }
 export async function loadSession(id) {
+  if (!id) {
+    const sessions = await request('/api/sessions');
+    id = sessions[0]?.session_id;
+  }
   const session = id ? await request(`/api/sessions/${encodeURIComponent(id)}`) : await fixtureSession();
+  if (!session.fixture) {
+    try {
+      session.context = await request(`/api/ui/context?sku_id=${encodeURIComponent(session.sku_pin || '')}&as_of=${encodeURIComponent(session.as_of)}`);
+    } catch { /* Missing context remains visibly empty. */ }
+    session.events = await request('/api/events?since=0');
+  }
   session.law_display ||= {};
   const anchors = [...new Set((session.verdicts || []).flatMap(row => row.legal_basis || []))];
   await Promise.all(anchors.map(async anchor => {
