@@ -47,6 +47,7 @@ export function verdictCard(atom, verdict, session, translations = {}) {
     try { await post('/api/report-wrong', { verdict_id: verdict.verdict_id, reporter }); report.textContent = 'Reported'; }
     catch { report.textContent = 'Report unavailable'; }
   };
-  foot.append(report); card.append(head, columns, foot);
+  if (!session.public_mode) foot.append(report);
+  card.append(head, columns, foot);
   return card;
 }

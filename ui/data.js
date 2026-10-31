@@ -5,7 +5,12 @@ export function apiURL(path) {
 }
 export async function request(path, options) {
   const response = await fetch(apiURL(path), options);
-  if (!response.ok) throw new Error(`Request unavailable (${response.status})`);
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}));
+    const retry = response.headers.get('Retry-After');
+    throw new Error(detail.todo ? `Not ready: ${detail.todo}` : retry ?
+      `Please try again in ${retry} seconds.` : `Request unavailable (${response.status})`);
+  }
   return response.json();
 }
 export function post(path, body) {
@@ -14,12 +19,14 @@ export function post(path, body) {
 export async function fixtureSession() {
   return request('/api/ui/fixture');
 }
-export async function loadSession(id) {
+export async function loadSession(id, publicMode = false) {
   if (!id) {
     const sessions = await request('/api/sessions');
     id = sessions[0]?.session_id;
   }
+  if (!id && publicMode) return null;
   const session = id ? await request(`/api/sessions/${encodeURIComponent(id)}`) : await fixtureSession();
+  session.public_mode = publicMode;
   if (!session.fixture) {
     try {
       session.context = await request(`/api/ui/context?sku_id=${encodeURIComponent(session.sku_pin || '')}&as_of=${encodeURIComponent(session.as_of)}`);
