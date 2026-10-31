@@ -1,6 +1,7 @@
 """Synthetic activation, offline replay and stage-ledger restoration."""
 
 import builtins
+import importlib
 import json
 from pathlib import Path
 import sqlite3
@@ -257,6 +258,21 @@ def test_autocommit_refuses_unrelated_windows_staged_path(world, monkeypatch):
     assert ledger.current_pack().version == 1 and (world.root / FILES[1]).read_bytes() == before
 
 
+def test_autocommit_rechecks_staging_after_backfill(world, monkeypatch):
+    candidate(world.root)
+    set_override("REGRESSION_AUTOCOMMIT", 1)
+    original = sys.modules["pipeline.dossier_events"].backfill
+    def stage_unrelated(pack):
+        original(pack)
+        (world.root / "unrelated.txt").write_text("Synthetic\n", encoding="utf-8")
+        git(world.root, "add", "unrelated.txt")
+    monkeypatch.setitem(sys.modules, "pipeline.dossier_events", SimpleNamespace(backfill=stage_unrelated))
+    with pytest.raises(ValueError, match="Unrelated"):
+        m.merge(RULE, "fixture")
+    assert ledger.current_pack().version == 1
+    assert git(world.root, "diff", "--cached", "--name-only") == "unrelated.txt"
+
+
 def test_missing_t7_does_not_approve_or_activate(world, monkeypatch):
     candidate(world.root)
     before = (world.root / FILES[1]).read_bytes()
@@ -269,6 +285,22 @@ def test_missing_t7_does_not_approve_or_activate(world, monkeypatch):
     with pytest.raises(ModuleNotFoundError, match="pipeline.dossier_events"):
         m.merge(RULE, "fixture")
     assert ledger.current_pack().version == 1 and (world.root / FILES[1]).read_bytes() == before
+
+
+def test_real_t7_backfill_integration_when_available(world, monkeypatch):
+    monkeypatch.delitem(sys.modules, "pipeline.dossier_events")
+    try:
+        importlib.import_module("pipeline.dossier_events")
+    except ModuleNotFoundError as exc:
+        if exc.name != "pipeline.dossier_events":
+            raise
+        pytest.skip("not ready: pipeline.dossier_events")
+    candidate(world.root)
+    previous = seed().verdicts[0]
+    pack = m.merge(RULE, "fixture")
+    current = ledger.get_session("synthetic").verdicts[0]
+    assert current.verdict == "red" and current.supersedes == previous.verdict_id
+    assert current.rule_pack_version == pack.version
 
 
 def test_backfill_failure_rolls_back_pack_files_and_own_index(world, monkeypatch):
