@@ -204,3 +204,10 @@ def test_offset_slice_for_a_match_with_original_punctuation():
     start = key.index("đĩa rau")
     end = start + len("đĩa rau")
     assert source[offsets[start] : offsets[end - 1] + 1] == "ĐĨA—RAU"
+
+
+@pytest.mark.parametrize("source", ["SP", "KO", "khong", "đc"])
+def test_expanded_token_offset_endpoints(source):
+    key, offsets = match_key(source)
+    assert len(key) == len(offsets)
+    assert source[offsets[0] : offsets[-1] + 1] == source
