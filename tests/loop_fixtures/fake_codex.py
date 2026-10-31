@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import socket
 import sys
 
 
@@ -31,6 +32,11 @@ record = dict(args=sys.argv[1:], prompt=prompt, worker_pid=os.getpid(), job_pid=
               pidfile=pidfile.read_text(encoding="utf-8"), cwd=str(root),
               retry=(root / "loop_input/retry.md").read_text(encoding="utf-8") if number > 1 else None)
 (capture / f"{root.name}-{number}.json").write_text(json.dumps(record), encoding="utf-8")
+if port := os.environ.get("DRAFT_TEST_CANCEL_PORT"):
+    with socket.create_connection(("127.0.0.1", int(port)), timeout=15) as connection:
+        connection.sendall(b"R")
+        connection.recv(1)
+    raise SystemExit(0)
 if os.environ.get("DRAFT_TEST_MODEL_ERROR"):
     print("model is unavailable", file=sys.stderr)
     raise SystemExit(1)

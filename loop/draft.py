@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -232,6 +233,19 @@ def _codex_info(command):
     return version
 
 
+def _terminate_tree(process):
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       timeout=5, check=True, shell=False)
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    process.wait(timeout=5)
+
+
 def _execute(job, worktree, number, log_dir):
     from ledger import update_job
 
@@ -256,22 +270,23 @@ def _execute(job, worktree, number, log_dir):
     err = log.with_suffix(".stderr")
     with log.open("w", encoding="utf-8", newline="\n") as stdout, err.open("w", encoding="utf-8", newline="\n") as stderr:
         process = subprocess.Popen(args, cwd=worktree, stdin=subprocess.PIPE, stdout=stdout,
-                                   stderr=stderr, text=True, encoding="utf-8", env=env)
+                                   stderr=stderr, text=True, encoding="utf-8", env=env,
+                                   start_new_session=os.name != "nt")
+        stopped = False
         try:
             update_job(job.job_id, pid=process.pid)
             pidfile.write_text(str(process.pid), encoding="utf-8")
             process.communicate(prompt)
+            stopped = True
         except BaseException:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+            _terminate_tree(process)
+            stopped = True
             raise
         finally:
-            pidfile.unlink(missing_ok=True)
-            update_job(job.job_id, pid=None)
+            # Keep the root PID available if the OS could not stop the tree.
+            if stopped:
+                pidfile.unlink(missing_ok=True)
+                update_job(job.job_id, pid=None)
     if process.returncode and "model" in err.read_text(encoding="utf-8").lower():
         raise RuntimeError("Codex model error; see the attempt stderr")
     if process.returncode == 0:
@@ -451,7 +466,7 @@ def run_job(job_id):
                      gate_result=attempt["gate_result"], error_lines=attempt["error_lines"], files_read=files_read))
         if status != "failed":
             break
-    job = update_job(job_id, status=status, attempts=attempts, pid=None, pr_url=pr_url)
+    job = update_job(job_id, status=status, attempts=attempts, pr_url=pr_url)
     append_event("job.finished", dict(job_id=job_id, status=status, pr_url=pr_url))
     return job
 
