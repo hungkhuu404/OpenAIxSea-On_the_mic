@@ -2,7 +2,6 @@ import importlib
 import json
 import re
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -22,11 +21,17 @@ def rule():
     return R04
 
 
-def atom(text):
+def atom(text, as_of="2026-10-21"):
+    from core.models import AtomView
     from textnorm import match_key
-    return SimpleNamespace(text=text, key=match_key(text)[0], axis="cong_dung",
-                           speaker_role="khong_ro", role_span=None,
-                           category_norm="TPBVSK", as_of="2026-10-21", turn_text=text)
+    return AtomView(text=text, key=match_key(text)[0], axis="cong_dung",
+                    speaker_role="khong_ro", role_span=None,
+                    category_norm="TPBVSK", as_of=as_of, turn_text=text)
+
+
+def case_atom(case):
+    as_of = "2025-01-08" if case["sku_id"] == "kera" else case.get("source_date") or "2026-10-21"
+    return atom(case["text"], as_of)
 
 
 @pytest.mark.parametrize("text", [
@@ -87,21 +92,21 @@ def test_golden(rule):
     cases = golden_cases()
     positives = [case for case in cases if "R04" in case["rule_ids"]]
     negatives = [case for case in cases if case["label"] != "red"]
-    misses = [case["case_id"] for case in positives if not rule.check(atom(case["text"]))]
-    false_hits = [case["case_id"] for case in negatives if rule.check(atom(case["text"]))]
+    misses = [case["case_id"] for case in positives if not rule.check(case_atom(case))]
+    false_hits = [case["case_id"] for case in negatives if rule.check(case_atom(case))]
     print(f"R04 golden: {len(positives) - len(misses)}/{len(positives)}; "
           f"false hits: {len(false_hits)}/{len(negatives)}; misses: {misses}")
     assert (len(positives), len(negatives), len(misses), false_hits) == (11, 37, 3, [])
     for case in cases:
         if case["case_id"] in ("dk_betics_gold-018", "dk_betics_gold-029"):
-            assert rule.check(atom(case["text"])) == []
+            assert rule.check(case_atom(case)) == []
 
 
 def test_reenactment(rule):
     lines = (ROOT / "data/demo/kera/reenactment_script.md").read_text(encoding="utf-8").splitlines()
     turns = [line.split("`", 1)[0] for line in lines if re.match(r"\*\*\[KOL \d+\]\*\*", line)]
     assert len(turns) == 24
-    assert all(not rule.check(atom(text)) for text in turns)
+    assert all(not rule.check(atom(text, "2025-01-08")) for text in turns)
 
 
 def test_law_verbatim_and_meta(rule):
