@@ -331,6 +331,28 @@ def test_flag_with_no_effective_basis_is_suppressed_and_invalid_rule_is_rejected
         guardrail.finalize_flag(flag.model_copy(update={"rule_id": "R04"}), _ctx(context))
 
 
+@pytest.mark.parametrize(("sku", "when", "rule_id", "flag_code"), [
+    ("kera", "2024-12-12", "L1_PREDECL", "NO_SELF_DECLARATION_AT_AS_OF"),
+    ("non_alco", "2025-01-08", "R06", "NO_AD_CONFIRMATION"),
+    ("kera", "2025-03-25", "L1_RECALL", "RECALLED_AT_AS_OF"),
+])
+def test_real_context_and_single_rule_pack_apply_finalized_flags(sku, when, rule_id, flag_code):
+    try:
+        from pipeline.context import build_context
+        from rules.registry import load_pack
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"pipeline.context", "rules.registry"}:
+            raise
+        pytest.skip(f"not ready: {exc.name}")
+    pack = load_pack([rule_id], mode="measure")
+    ctx = build_context(sku, when, pack=pack)
+    assert [flag.flag_code for flag in ctx.session_flags] == [flag_code]
+    assert ctx.session_flags[0].legal_basis
+    assert "ND115-2018/D22/K3" not in ctx.session_flags[0].legal_basis
+    assert all(guardrail.is_effective(anchor, ctx.as_of)
+               for anchor in ctx.session_flags[0].legal_basis)
+
+
 def test_is_effective_uses_only_top_level_front_matter_and_caches_per_file(monkeypatch, tmp_path):
     law_file = tmp_path / "law.md"
     law_file.write_text("---\neffective_from: 2025-01-08\ntext_version_effective_from: 2099-01-01\n"
