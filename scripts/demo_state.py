@@ -106,6 +106,7 @@ def restore(name, port=8000):
     destination = eval_root()
     existing = safety.files(destination)
     wanted = safety.files(folder / 'eval')
+    present_target = present_path() if (folder / 'present.json').is_file() else None
     cleanup = []
     if current['head'] and manifest['head']:
         for tree in current['worktrees']:
@@ -125,8 +126,8 @@ def restore(name, port=8000):
         if relative not in wanted:
             file.unlink()
     copy_tree(folder / 'eval', destination)
-    if (folder / 'present.json').is_file():
-        copy_tree_file(folder / 'present.json', present_path())
+    if present_target:
+        copy_tree_file(folder / 'present.json', present_target)
     for location, _ in cleanup:
         safety.git('worktree', 'remove', '--force', str(location))
     if current['head'] and manifest['head']:
@@ -311,6 +312,8 @@ def import_state(source):
     safety.guard()
     source = Path(source).resolve()
     transfer = safety.read(source / 'transfer.json')
+    if not {'snapshot/manifest.json', 'snapshot/ledger.db', 'snapshot/present.json'} <= transfer['files'].keys():
+        raise ValueError('Incomplete handoff snapshot')
     name = transfer['name']
     destination = snapshot_path(name)
     contents = {}
@@ -334,13 +337,13 @@ def import_state(source):
             raise ValueError('Snapshot differs; move it aside by hand')
     options_path = present_path()
     options = safety.read(options_path)
+    new = safety.read(source / 'snapshot' / 'present.json').get('pr1_third_target')
     for target, file in contents.items():
         if target.exists() and digest(target) != digest(file):
             raise ValueError('Conflicting existing file: ' + target.name)
     for target, file in contents.items():
         publish_one(file, target)
     old = options.get('pr1_third_target')
-    new = safety.read(source / 'snapshot' / 'present.json').get('pr1_third_target')
     options['pr1_third_target'] = new
     safety.write(options_path, options)
     print(f'pr1_third_target: {old} -> {new}')
@@ -351,7 +354,7 @@ def stage_warning():
     if config.settings.UI_STAGE and marker.exists():
         try:
             safety.check_config(safety.read(snapshot_path(safety.read(marker)['name']) / 'manifest.json'))
-        except ValueError as error:
+        except (ValueError, OSError) as error:
             print('\x1b[31mSTAGE CONFIGURATION MISMATCH\n' + str(error) + '\x1b[0m', flush=True)
 
 

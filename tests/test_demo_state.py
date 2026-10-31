@@ -228,6 +228,15 @@ def test_stage_banner_and_missing_rule(world, capsys):
         demo.restore('stage', free_port())
 
 
+def test_restore_preflights_present_before_mutating_ledger(world):
+    demo.snapshot('saved')
+    ledger.add_label(dict(target='synthetic', kind='report_wrong', labeler='operator'))
+    config.set_override('PRESENT_DIR', None)
+    with pytest.raises(ValueError, match='PRESENT_DIR'):
+        demo.restore('saved', free_port())
+    assert len(ledger.list_labels()) == 1
+
+
 def test_missing_module_exact_only(world, monkeypatch):
     def missing(name):
         raise ModuleNotFoundError(name=name)
