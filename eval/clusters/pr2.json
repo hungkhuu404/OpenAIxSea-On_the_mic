@@ -1,0 +1,47 @@
+{
+  "name": "pr2",
+  "item_ids": [
+    "b125bef2c9a34c00964a8256f582785e",
+    "edeb9cb00d004416b6bec2564a956f4a",
+    "df46887112dc428ebdfc40dc0503584c"
+  ],
+  "texts": [
+    "Kiên trì dùng giúp ngăn ngừa các bệnh tim mạch",
+    "Sản phẩm giúp ngăn ngừa nhiều bệnh do đường huyết cao",
+    "Dùng lâu dài để ngăn ngừa tái phát bệnh tiểu đường"
+  ],
+  "labels": [
+    "red",
+    "red",
+    "red"
+  ],
+  "cluster_hash": "d63e0912f39850075785b324bc9bbac5a37fcd823f74e2d47b8e8297dfb845cb",
+  "created_at": "2026-10-31T07:56:18.123066+00:00",
+  "commit": "0db7422d1fbba5c7b8538f5279ac7442584c1dbb",
+  "runs": [
+    {
+      "job_id": "82c59d0b89354876811b0bb4155b0358",
+      "rule_id": "R04b",
+      "branch": "rule/R04b-82c59d0b89354876811b0bb4155b0358",
+      "started": "2026-10-31T07:56:41.506057+00:00",
+      "attempts": [
+        {
+          "attempt_no": 1,
+          "gate_result": "fail",
+          "error_lines": [
+            "R04b check 7: Log line 26: forbidden path: class AtomView",
+            "R04b check 7: Log line 27: forbidden path: class AtomView",
+            "R04b: behaviour blocked by failed checks 7"
+          ]
+        },
+        {
+          "attempt_no": 2,
+          "gate_result": "pass",
+          "error_lines": []
+        }
+      ],
+      "result": "passed",
+      "pr_url": "https://github.com/hungkhuu404/OpenAIxSea-On_the_mic/pull/54"
+    }
+  ]
+}
