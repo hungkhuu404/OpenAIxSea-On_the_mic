@@ -92,6 +92,9 @@ def create_app(public=False):
                 except NotReady as error:
                     print(f"not ready: {error.module}", flush=True)
             fields = config.config_fields()
+            if config.settings.UI_STAGE:
+                from scripts.demo_state import stage_warning
+                stage_warning()
             app.state.config_fields = fields
             print(" ".join(f"{key}={value}" for key, value in fields.items()), flush=True)
             yield
