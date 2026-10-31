@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "atoms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "span": {"type": "string"},
+          "axis": {
+            "type": "string",
+            "enum": ["cong_dung", "thanh_phan", "chat_luong", "doi_tuong", "lieu_dung", "xuat_xu", "ho_so", "khuyen_cao", "vien_dan", "so_sanh", "tuyet_doi", "gia", "khuyen_mai", "bao_hanh"]
+          },
+          "speaker_role": {
+            "type": "string",
+            "enum": ["bac_si", "duoc_si", "nguoi_benh", "kol", "nguoi_ban", "khong_ro"]
+          },
+          "role_span": {"type": ["string", "null"]},
+          "subject_is_product": {"type": "boolean"}
+        },
+        "required": ["span", "axis", "speaker_role", "role_span", "subject_is_product"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["atoms"],
+  "additionalProperties": false
+}
