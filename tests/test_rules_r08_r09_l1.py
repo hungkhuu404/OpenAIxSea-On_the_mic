@@ -152,7 +152,10 @@ def test_golden_r09_and_reenactment():
              (ROOT / "data/cases/golden.jsonl").read_text(encoding="utf-8").splitlines()]
     targets = [c for c in cases if "R09" in c["rule_ids"]]
     non_red = [c for c in cases if c["label"] != "red"]
-    fired = lambda c: bool(rule("R09").check(atom(c["text"])))
+    def fired(case):
+        as_of = ("2025-01-08" if case["sku_id"] == "kera"
+                 else case.get("source_date") or "2026-10-21")
+        return bool(rule("R09").check(atom(case["text"], as_of=date.fromisoformat(as_of))))
     misses = [c["case_id"] for c in targets if not fired(c)]
     false_hits = [c["case_id"] for c in non_red if fired(c)]
     print(f"R09 golden: {len(targets) - len(misses)}/{len(targets)}; "
@@ -165,7 +168,7 @@ def test_golden_r09_and_reenactment():
     lines = (ROOT / "data/demo/kera/reenactment_script.md").read_text(encoding="utf-8").splitlines()
     turns = [line.split("`", 1)[0] for line in lines if re.match(r"\*\*\[KOL \d+\]\*\*", line)]
     assert len(turns) == 24
-    assert all(not rule("R09").check(atom(text)) for text in turns)
+    assert all(not rule("R09").check(atom(text, as_of=date(2025, 1, 8))) for text in turns)
 
 
 def test_real_dossiers(records):
