@@ -240,6 +240,6 @@ def _route_atom(atom, ctx, pack, purpose, emit=None, *, session_id,
     draft.llm_call_ids = list(dict.fromkeys([*draft.llm_call_ids, *call_ids]))
     started = monotonic()
     guardrail = import_module("pipeline.guardrail")
-    verdict = guardrail.finalize(asdict(draft), ctx, rule_pack_version)
+    verdict = guardrail.finalize(asdict(draft), ctx, rule_pack_version, pack=pack)
     event("F", str(verdict.verdict), started)
     return RouteResult(verdict, negq_miss, e_miss)

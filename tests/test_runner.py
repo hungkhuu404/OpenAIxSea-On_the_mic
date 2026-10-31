@@ -170,7 +170,7 @@ def boundary(monkeypatch, tmp_path):
         return VerdictDraft(state.colour, "llm_votes", family="STANDARD",
                             permitted_id=items[0]["permitted_id"], llm_call_ids=[result.request_sha256])
 
-    def finalize(draft, ctx, version):
+    def finalize(draft, ctx, version, *, pack):
         assert isinstance(draft, dict)
         return Verdict(atom_key=draft["atom_key"], rule_pack_version=version,
                        verdict=draft["verdict"], decided_by=draft["decided_by"],
