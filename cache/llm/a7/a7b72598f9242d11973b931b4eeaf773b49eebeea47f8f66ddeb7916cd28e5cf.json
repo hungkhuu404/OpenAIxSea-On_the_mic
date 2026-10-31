@@ -1,0 +1,1 @@
+{"backend":"codex","effort":"none","error":null,"kind":"negq","latency_ms":23521.84380000108,"model":"gpt-6-luna","purpose":"shadow","request_sha256":"a7b72598f9242d11973b931b4eeaf773b49eebeea47f8f66ddeb7916cd28e5cf","response":{"answer":"negated"},"ts":"2026-10-31T07:28:18.965249+00:00","usage":null}
