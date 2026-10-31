@@ -20,7 +20,7 @@ from core.models import ClusterFile, ClusterRun, GateResult, RuleAttempt, RuleMe
 ALLOWED_COMMANDS = """Every command log is checked; a command outside this block fails the attempt. <rule_id> is the rule_id in loop_input/task.json.
 Use one single-line command per shell call. One shell wrapper is allowed: powershell -Command, pwsh -Command, cmd /c, bash -lc or -c, sh -c or -lc, zsh -lc or -c (including /bin/zsh). Prefer separate calls; each command joined with ;, && or | is checked separately.
 Never use $(, backticks, ${, embedded newlines, heredocs, redirection (<, >, >>), environment prefixes, $env:, env, set, export, cd, package installers, the gate, Python except the own-test command, or git except status/diff. Tests are already offline; never set or inspect environment variables.
-Read only literal relative paths: no wildcards, parent traversal or absolute paths. Read commands: cat, type, head, tail, sed -n, rg, grep, ls, pwd. In Windows use only Get-Content for reads, not Select-String or Get-ChildItem -Recurse.
+Use only literal operands and relative paths: no shell expansion (including cmd %NAME% and !NAME!), wildcards, parent traversal or absolute paths. Read commands: cat, type, head, tail, sed -n, rg, grep, ls, pwd. In Windows use only Get-Content for reads, not Select-String or Get-ChildItem -Recurse.
 Get-Content accepts one path, positional or after -Path/-LiteralPath, with optional -Raw, -Encoding UTF8 (or utf8), and -TotalCount <n> in any order. No other parameters.
 Readable files: AGENTS.md, pytest.ini, requirements.txt, rules/collisions.txt, rules/law_basis.json, rules/<name>.py, your own rules/<rule_id>.meta.json and tests/test_<rule_id>.py; files under loop_input/, core/, textnorm/, data/law/ and .agents/skills/draft-rule/.
 Name files directly. Never list/search the worktree root, rules/ or tests/ as directories: they can contain forbidden files. This worktree has no docs directory; do not read contracts there.
@@ -306,7 +306,7 @@ def _publish(job, worktree, cluster_path, started, attempts, result):
     # Keep the per-cluster lock through the PR operation so concurrent passes cannot duplicate it.
     with _cluster_lock(cluster_path):
         cluster = ClusterFile.model_validate(_read(cluster_path))
-        if any(run.result == "passed" for run in cluster.runs):
+        if any(run.result == "passed" or run.pr_url for run in cluster.runs):
             return None
         meta = RuleMeta.model_validate(_read(worktree / files[1]))
         body = dict(source_items=cluster.item_ids,
@@ -320,7 +320,7 @@ def _publish(job, worktree, cluster_path, started, attempts, result):
             "--title", f"{job.rule_id}: proposed rule", "--body-file", str(body_path)],
             cwd=worktree, check=True, capture_output=True, text=True, encoding="utf-8").stdout.strip()
         cluster.runs.append(_run_summary(job, started, attempts, "passed", url))
-        _save_cluster(cluster_path, cluster)
+        _write(cluster_path, cluster.model_dump(mode="json"))
         return url
 
 
@@ -333,6 +333,9 @@ def _run_summary(job, started, attempts, status, pr_url):
 def _record_run(path, job, started, attempts, status, pr_url):
     with _cluster_lock(path):
         cluster = ClusterFile.model_validate(_read(path))
+        prior = next((run for run in cluster.runs if run.job_id == job.job_id), None)
+        if prior and prior.pr_url:
+            pr_url = prior.pr_url
         cluster.runs = [run for run in cluster.runs if run.job_id != job.job_id]
         cluster.runs.append(_run_summary(job, started, attempts, status, pr_url))
         _save_cluster(path, cluster)
@@ -363,7 +366,7 @@ def run_job(job_id):
     for number in range(1, 4):
         attempt_started = _now()
         terminal_error = False
-        files_read, log = [], None
+        files_read, log = [], log_dir / f"attempt_{number}.jsonl"
         try:
             if settings.PUBLIC_MODE:
                 raise ValueError("Public mode cannot start a draft-rule job")

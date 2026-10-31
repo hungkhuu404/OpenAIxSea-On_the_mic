@@ -29,7 +29,8 @@ def make_cluster(item_ids, name):
     if rows.keys() != wanted:
         raise ValueError("Unknown correction-memory item ids")
     items = [rows[key] for key in item_ids]
-    canonical = json.dumps(items, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    canonical = json.dumps(sorted((i["item_id"], i["text"]) for i in items),
+                           ensure_ascii=False, separators=(",", ":"))
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     path = paths.clusters_dir() / f"{name}.json"
     with draft._cluster_lock(path):
@@ -56,7 +57,8 @@ def run_cluster(path, repeat=1):
     if not paths.ledger_db().is_file():
         raise ValueError("LEDGER_DB must name an existing ledger file")
     cluster = ClusterFile.model_validate(draft._read(path))
-    rule_id = allocate_rule_id(draft._family(draft._source_items(cluster)))
+    rule_id = (cluster.runs[0].rule_id if cluster.runs
+               else allocate_rule_id(draft._family(draft._source_items(cluster))))
     jobs = []
     for _ in range(repeat):
         job_id = uuid4().hex

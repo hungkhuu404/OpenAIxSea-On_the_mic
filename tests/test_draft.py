@@ -1,7 +1,9 @@
 import json
+import hashlib
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import sys
 from types import ModuleType
@@ -108,11 +110,18 @@ def test_block_examples_pass_or_fail_the_real_logscan(tmp_path):
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("fixture", encoding="utf-8")
-    for number, line in enumerate(draft.ALLOWED_COMMANDS.splitlines()):
+    real = [json.loads(line) for line in (ROOT / "tests/gate_fixtures/logs/codex_real_macos.jsonl").read_text(encoding="utf-8").splitlines()]
+    command = next(row["item"]["command"] for row in real if row.get("item", {}).get("type") == "command_execution")
+    shell = shlex.split(command)[:2]
+    examples = draft.ALLOWED_COMMANDS.splitlines() + [
+        "FAIL: cmd /c type loop_input/%NAME%.json", "FAIL: cmd /c type loop_input/!NAME!.json"]
+    for number, line in enumerate(examples):
         if not line.startswith(("PASS: ", "FAIL: ")):
             continue
         passing = line.startswith("PASS: ")
         command = line.split(": ", 1)[1].replace("<rule_id>", "R04x")
+        if not command.startswith(("powershell ", "cmd ")):
+            command = " ".join(shell) + " " + shlex.quote(command)
         log = tmp_path / f"log-{number}.jsonl"
         log.write_text(json.dumps(dict(type="item.completed", item=dict(
             type="command_execution", command=command))) + "\n", encoding="utf-8")
@@ -162,6 +171,8 @@ def test_three_failed_attempts_leave_sources_unchanged(world):
     assert paths.regressions_file().read_bytes() == before
     assert draft.funnel(world["digest"]) == dict(K=1, I=0, J=0, R=1)
     assert draft._read(world["path"])["runs"][0]["result"] == "failed"
+    import ledger
+    assert ledger.events_since(0)[-1].payload == dict(job_id="job1", status="failed", pr_url=None)
 
 
 def test_cache_miss_is_error_without_retry(world, monkeypatch):
@@ -204,3 +215,161 @@ def test_cli_repeat_uses_one_allocation(world, monkeypatch):
     assert calls.count(["exec", "--help"]) == 1
     # Each job also obtains its required cfg through core.config, which probes --version.
     assert calls.count(["--version"]) == 3
+
+
+def test_repeat_with_real_allocator_opens_only_one_fake_pr(world, monkeypatch):
+    import ledger
+
+    set_override("LOOP_OPEN_PR", 1)
+    world["outcomes"][:] = [True]
+    real_git, real_run = draft._git, subprocess.run
+    pushes, prs = [], []
+
+    def git_call(root, *args):
+        if args[0] == "push":
+            pushes.append(args)
+            return ""
+        return real_git(root, *args)
+
+    def run(args, **kwargs):
+        if args[0] == "gh":
+            prs.append(args)
+            body = Path(args[-1]).read_text(encoding="utf-8")
+            assert "pending human review" in body and "source_items" in body
+            return subprocess.CompletedProcess(args, 0, stdout="https://example.invalid/pr/1\n")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(draft, "_git", git_call)
+    monkeypatch.setattr(subprocess, "run", run)
+    jobs = cli.run_cluster(world["path"], repeat=2)
+    assert {row.rule_id for row in jobs} == {"R04b"}
+    assert len({row.branch for row in jobs}) == 2
+    assert all(row.status == "passed" for row in jobs)
+    assert len(pushes) == len(prs) == 1
+    assert jobs[0].pr_url and jobs[1].pr_url is None
+    expected = dict(K=2, I=2, J=0, R=0)
+    ledger.init_db(world["base"] / ".local/fresh.db")
+    assert draft.funnel(world["digest"]) == expected
+
+
+def test_default_never_pushes_or_calls_gh(world, monkeypatch):
+    real_git, real_run = draft._git, subprocess.run
+
+    def git_call(root, *args):
+        assert args[0] != "push"
+        return real_git(root, *args)
+
+    def run(args, **kwargs):
+        assert args[0] != "gh"
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(draft, "_git", git_call)
+    monkeypatch.setattr(subprocess, "run", run)
+    assert job(world).status == "passed"
+
+
+def test_inputs_do_not_leak_evaluation_or_other_memory(world):
+    extra = world["source"] | dict(item_id="unrelated", text="Unrelated synthetic correction memory")
+    with paths.regressions_file().open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(extra) + "\n")
+    assert job(world).status == "passed"
+    folder = paths.worktree_root() / "job1/loop_input"
+    permitted = {item["text"] for rows in draft._read(folder / "permitted_items.json").values() for item in rows}
+    inputs = "\n".join(path.read_text(encoding="utf-8") for path in folder.iterdir())
+    golden = [json.loads(line) for line in paths.GOLDEN_CASES.read_text(encoding="utf-8").splitlines() if line]
+    assert all(case["text"] not in inputs for case in golden if case["text"] not in permitted)
+    assert extra["text"] not in inputs
+
+
+@pytest.mark.parametrize("problem", ["missing", "exception", "nonzero"])
+def test_execution_errors_are_recorded_and_nonzero_gate_pass_retries(world, monkeypatch, problem):
+    import gate
+    import ledger
+
+    world["outcomes"][:] = [True]
+    if problem == "missing":
+        set_override("CODEX_CMD", "missing-synthetic-codex")
+    elif problem == "exception":
+        def broken(*args, **kwargs):
+            raise RuntimeError("Synthetic gate exception")
+        monkeypatch.setattr(gate, "run_gate", broken)
+    else:
+        monkeypatch.setenv("DRAFT_TEST_EXIT", "7")
+    result = job(world)
+    assert result.status == ("failed" if problem == "nonzero" else "error")
+    assert len(result.attempts) == (3 if problem == "nonzero" else 1)
+    assert all(row.error_lines for row in result.attempts)
+    assert result.pid is None and not (paths.jobs_dir() / "job1.pid").exists()
+    events = ledger.events_since(0)
+    assert sum(row.type == "job.attempt" for row in events) == len(result.attempts)
+    assert events[-1].type == "job.finished" and events[-1].payload["status"] == result.status
+
+
+def test_cluster_autocommit_records_previous_commit_on_next_write(world):
+    destination = world["base"] / "eval"
+    shutil.copytree(paths.eval_dir(), destination, dirs_exist_ok=True)
+    set_override("EVAL_DIR", "eval")
+    set_override("REGRESSION_AUTOCOMMIT", 1)
+    path = paths.clusters_dir() / "synthetic.json"
+    from core.models import ClusterFile
+    cluster = ClusterFile.model_validate(draft._read(path))
+    first = draft._save_cluster(path, cluster)
+    assert draft._read(path)["commit"] is None
+    draft._save_cluster(path, cluster)
+    assert draft._read(path)["commit"] == first
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Executable symlink fixture is POSIX-only")
+def test_quoted_executable_path_with_spaces(world):
+    executable = world["base"].parent / "python with spaces"
+    executable.symlink_to(sys.executable)
+    fake = world["base"].parent / "fake tool with spaces.py"
+    set_override("CODEX_CMD", f'"{executable}" "{fake}"')
+    assert job(world).status == "passed"
+
+
+def test_real_labels_t5_dispatch_to_real_dry_runner(world, monkeypatch):
+    import ledger
+    from threading import Event
+    from core.models import Atom, NearHit, Session, Turn, Verdict
+    from loop import labels, t5
+
+    set_override("LOOP_DRY", 1)
+    done = Event()
+    original = draft.run_job
+    results = []
+
+    def run(job_id):
+        try:
+            results.append(original(job_id))
+        finally:
+            done.set()
+
+    monkeypatch.setattr(draft, "run_job", run)
+    items = []
+    for number in range(3):
+        session_id = f"synthetic-{number}"
+        text = f"Sản phẩm phòng thêm bệnh {number}"
+        session = Session(session_id=session_id, sku_pin="demo_sku", as_of="2025-01-08",
+            channel="written", source="Synthetic fixture", turns=[Turn(turn_id="t1", speaker_label="[KOL 1]", attribution="constructed", text=text)])
+        ledger.add_session(session)
+        atom = Atom(atom_id="a1", turn_id="t1", span=text, start=0, end=len(text), axis="cong_dung",
+            speaker_role="kol", subject_is_product=True, near_hits=[NearHit(pattern="phòng … bệnh", gap=1,
+                law_anchor="LDUOC-2016/D6/K15", law_span="chữa bệnh", span=text)])
+        ledger.add_atoms(session_id, [atom])
+        verdict = Verdict(atom_key=f"{session_id}:a1", rule_pack_version=1, verdict="abstain",
+            decided_by="abstain:DOSSIER_EMPTY", reason_code="DOSSIER_EMPTY", as_of=session.as_of,
+            dossier_hash="synthetic", ts=draft._now())
+        ledger.append_verdicts([verdict])
+        items.append(labels.record_label(verdict.atom_key, "red", "R04", "fixture"))
+    assert done.wait(10), "Synthetic T5 runner did not finish"
+    assert len(results) == 1 and results[0].status == "passed" and results[0].dry
+    result = results[0]
+    expected = hashlib.sha256(json.dumps(sorted((i.item_id, i.text) for i in items),
+        ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+    assert result.cluster_hash == expected
+    assert draft.funnel(expected) == dict(K=1, I=0, J=1, R=0)
+    assert t5.maybe_trigger() == []
+    with pytest.raises(ValueError, match="exact cluster"):
+        cli.make_cluster([item.item_id for item in reversed(items)], "duplicate")
+    assert len(ledger.list_labels()) == 3
