@@ -99,6 +99,20 @@ def test_disclaimer_does_not_hide_separate_assertion(rule, placement, trigger):
     assert not hits[0].ambiguous_negation
 
 
+@pytest.mark.parametrize("layout", ["truncated", "interrupted"])
+def test_disclaimer_cannot_borrow_or_cover_a_separate_claim(rule, layout):
+    from rules._common import DISCLAIMER, disclaimer_spans
+    claim = "Sản phẩm chữa bệnh."
+    text = (DISCLAIMER.removesuffix(" chữa bệnh") + ". " + claim if layout == "truncated" else
+            "Thực phẩm này không phải là thuốc. " + claim + " Không có tác dụng thay thế thuốc chữa bệnh.")
+    hits = rule.check(atom(text))
+    assert [hit.matched for hit in hits] == ["chữa bệnh"]
+    assert not hits[0].ambiguous_negation
+    claim_start = text.index(claim)
+    assert all(end <= claim_start or start >= claim_start + len(claim)
+               for start, end in disclaimer_spans(text))
+
+
 @pytest.mark.parametrize("construction", ["không chỉ", "không những"])
 @pytest.mark.parametrize("continuation", ["mà còn", ", mà còn", ", giảm đau mà còn"])
 def test_not_only_is_affirmative(rule, construction, continuation):

@@ -67,7 +67,7 @@ def is_disclaimer(text):
 
 
 def disclaimer_spans(text):
-    """Locate fuzzy disclaimer quotations, preferring the earliest equal LCS."""
+    """Locate aligned disclaimer runs without covering unquoted assertions."""
     from textnorm import match_key, syllables
 
     reference = syllables(match_key(DISCLAIMER)[0])
@@ -76,6 +76,9 @@ def disclaimer_spans(text):
     while words:
         previous = [()] * (len(reference) + 1)
         for word in words:
+            if len(previous[-1]) * 4 >= len(reference) * 3 and re.search(
+                    r"[.;!?\n]", text[previous[-1][-1].end:word.start]):
+                break
             current = [()]
             for index, expected in enumerate(reference, 1):
                 matched = previous[index - 1] + (word,) if word.phrase == expected else ()
@@ -84,8 +87,12 @@ def disclaimer_spans(text):
         sequence = previous[-1]
         if len(sequence) * 4 < len(reference) * 3:
             break
-        start, end = sequence[0].start, sequence[-1].end
-        spans.append((start, end))
+        for word in sequence:
+            if spans and not match_key(text[spans[-1][1]:word.start])[0]:
+                spans[-1] = (spans[-1][0], word.end)
+            else:
+                spans.append((word.start, word.end))
+        end = sequence[-1].end
         words = [word for word in words if word.start >= end]
     return spans
 
