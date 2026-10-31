@@ -336,3 +336,89 @@ def add_pending(pending):
     with transaction() as conn:
         conn.execute("INSERT INTO pending_dossier VALUES (?,?)", (data["pending_id"], _json(data)))
     return data["pending_id"]
+
+
+def _job_from_row(conn, row):
+    data = json.loads(row["data"])
+    data["attempts"] = [json.loads(attempt[0]) for attempt in conn.execute(
+        "SELECT data FROM job_attempts WHERE job_id=? ORDER BY attempt_no", (row["job_id"],))]
+    return Job.model_validate(data)
+
+
+def get_job(job_id):
+    with _read() as conn:
+        row = conn.execute("SELECT job_id,data FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+        return _job_from_row(conn, row) if row is not None else None
+
+
+def list_jobs(rule_id=None, status=None):
+    sql, args, filters = "SELECT job_id,data FROM jobs", [], []
+    for field, value in (("rule_id", rule_id), ("status", status)):
+        if value is not None:
+            filters.append(f"json_extract(data, '$.{field}')=?")
+            args.append(value)
+    if filters:
+        sql += " WHERE " + " AND ".join(filters)
+    sql += " ORDER BY rowid DESC"
+    with _read() as conn:
+        jobs = [_job_from_row(conn, row) for row in conn.execute(sql, args)]
+    return sorted(jobs, key=lambda job: datetime.fromisoformat(job.ts), reverse=True)
+
+
+def get_verdict(verdict_id):
+    with _read() as conn:
+        row = conn.execute("SELECT verdict_id,supersedes,data FROM verdicts WHERE verdict_id=?",
+                           (verdict_id,)).fetchone()
+        if row is None:
+            return None
+        return Verdict.model_validate(json.loads(row["data"]) | {
+            "verdict_id": row["verdict_id"], "supersedes": row["supersedes"]})
+
+
+def add_label(label):
+    data = dict(_data(label))
+    if data["kind"] not in {"label", "report_wrong"}:
+        raise ValueError("Unknown review action kind")
+    data.setdefault("label", None)
+    data.setdefault("rule_id", None)
+    data.setdefault("verdict_id", None)
+    data.setdefault("ts", _now())
+    with transaction() as conn:
+        return conn.execute("INSERT INTO labels(data) VALUES (?)", (_json(data),)).lastrowid
+
+
+def list_labels(session_id=None):
+    with _read() as conn:
+        labels = [json.loads(row[0]) for row in conn.execute("SELECT data FROM labels ORDER BY id")]
+    if session_id is None:
+        return labels
+    return [label for label in labels if label["target"] == session_id
+            or label["target"].startswith(session_id + ":")]
+
+
+def _pending_from_row(row):
+    return {"status": "pending", "approved_by": None, "approved_at": None} | json.loads(row["data"])
+
+
+def get_pending(pending_id):
+    with _read() as conn:
+        row = conn.execute("SELECT data FROM pending_dossier WHERE pending_id=?", (pending_id,)).fetchone()
+        return _pending_from_row(row) if row is not None else None
+
+
+def list_pending(status=None):
+    with _read() as conn:
+        pending = [_pending_from_row(row) for row in conn.execute("SELECT data FROM pending_dossier ORDER BY rowid")]
+    return pending if status is None else [item for item in pending if item["status"] == status]
+
+
+def update_pending(pending_id, **changes):
+    with transaction() as conn:
+        data = get_pending(pending_id)
+        if data is None:
+            raise KeyError(pending_id)
+        data.update(changes)
+        if data["status"] not in {"pending", "approved", "rejected"}:
+            raise ValueError("Unknown pending dossier status")
+        conn.execute("UPDATE pending_dossier SET data=? WHERE pending_id=?", (_json(data), pending_id))
+        return data
