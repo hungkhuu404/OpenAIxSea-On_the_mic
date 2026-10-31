@@ -72,22 +72,21 @@ def disclaimer_spans(text):
 
     reference = syllables(match_key(DISCLAIMER)[0])
     spans = []
-    for sentence in re.finditer(r"[^.;!?\n]+", text):
-        words = syllable_matches(sentence.group(), tuple(dict.fromkeys(reference)))
-        while words:
-            previous = [()] * (len(reference) + 1)
-            for word in words:
-                current = [()]
-                for index, expected in enumerate(reference, 1):
-                    matched = previous[index - 1] + (word,) if word.phrase == expected else ()
-                    current.append(max(previous[index], current[-1], matched, key=len))
-                previous = current
-            sequence = previous[-1]
-            if len(sequence) * 4 < len(reference) * 3:
-                break
-            start, end = sequence[0].start, sequence[-1].end
-            spans.append((sentence.start() + start, sentence.start() + end))
-            words = [word for word in words if word.start >= end]
+    words = syllable_matches(text, tuple(dict.fromkeys(reference)))
+    while words:
+        previous = [()] * (len(reference) + 1)
+        for word in words:
+            current = [()]
+            for index, expected in enumerate(reference, 1):
+                matched = previous[index - 1] + (word,) if word.phrase == expected else ()
+                current.append(max(previous[index], current[-1], matched, key=len))
+            previous = current
+        sequence = previous[-1]
+        if len(sequence) * 4 < len(reference) * 3:
+            break
+        start, end = sequence[0].start, sequence[-1].end
+        spans.append((start, end))
+        words = [word for word in words if word.start >= end]
     return spans
 
 

@@ -86,15 +86,16 @@ def test_expanded_syllables_keep_full_original_token(rule, phrase, expected):
 
 
 @pytest.mark.parametrize("placement", ["before", "after", "both", "same_clause", "no_separator", "fuzzy"])
-def test_disclaimer_does_not_hide_separate_assertion(rule, placement):
+@pytest.mark.parametrize("trigger", ["chữa khỏi", "chữa bệnh"])
+def test_disclaimer_does_not_hide_separate_assertion(rule, placement, trigger):
     from rules._common import DISCLAIMER
-    claim = "Sản phẩm chữa khỏi tiểu đường"
+    claim = f"Sản phẩm {trigger} tiểu đường"
     texts = {"before": f"{DISCLAIMER}. {claim}.", "after": f"{claim}. {DISCLAIMER}.",
              "both": f"{DISCLAIMER}. {claim}. {DISCLAIMER}.", "same_clause": f"{DISCLAIMER}, {claim}.",
              "no_separator": f"{DISCLAIMER} {claim}.",
              "fuzzy": f"{DISCLAIMER.replace('Thực phẩm này', 'Thực phẩm')}. {claim}."}
     hits = rule.check(atom(texts[placement]))
-    assert [hit.matched for hit in hits] == ["chữa khỏi"]
+    assert [hit.matched for hit in hits] == [trigger]
     assert not hits[0].ambiguous_negation
 
 
@@ -117,9 +118,11 @@ def test_real_negation_remains_exempt(rule, text):
 
 
 @pytest.mark.parametrize("prefix", ["Thực phẩm này", "Thực phẩm"])
-def test_disclaimer_alone_remains_exempt(rule, prefix):
+@pytest.mark.parametrize("separator", [" và ", ", ", ". ", "\n"])
+def test_disclaimer_alone_remains_exempt(rule, prefix, separator):
     from rules._common import DISCLAIMER
-    assert rule.check(atom(DISCLAIMER.replace("Thực phẩm này", prefix))) == []
+    text = DISCLAIMER.replace("Thực phẩm này", prefix).replace(" và ", separator)
+    assert rule.check(atom(text)) == []
 
 
 def test_extraction_negation_helper_keeps_default_behaviour():
