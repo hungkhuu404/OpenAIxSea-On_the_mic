@@ -184,17 +184,19 @@ def test_candidate_replaces_main_before_import_and_ignores_other_candidates(regi
     assert pack.active[0].meta.approved_by is None
 
 
-@pytest.mark.parametrize("duplicate", ["metadata", "module"])
+@pytest.mark.parametrize("duplicate", ["metadata", "module", "module_without_metadata"])
 def test_duplicate_id_validation_survives_pack_filtering(registry, tmp_path, monkeypatch, duplicate):
     write_rule(tmp_path, "R04")
     path = write_rule(tmp_path, "R09")
     source = path.with_suffix(".meta.json") if duplicate == "metadata" else path
     target = tmp_path / ("duplicate.meta.json" if duplicate == "metadata" else "duplicate.py")
     target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    if duplicate == "module_without_metadata":
+        path.with_suffix(".meta.json").unlink()
     use_directory(monkeypatch, registry, tmp_path)
     with pytest.raises(ValueError, match="Duplicate"):
         registry.load_pack(["R04"])
-    with pytest.raises(ValueError, match="Duplicate"):
+    with pytest.raises(ValueError, match="Missing" if duplicate == "module_without_metadata" else "Duplicate"):
         registry.all_rules()
 
 
@@ -204,3 +206,38 @@ def test_selected_module_still_requires_matching_metadata(registry, tmp_path, mo
     use_directory(monkeypatch, registry, tmp_path)
     with pytest.raises(ValueError, match="Rule/meta mismatch: R04.FAMILY"):
         registry.load_pack(["R04"])
+
+
+@pytest.mark.parametrize("include_live", [False, True])
+def test_sparse_candidate_ignores_reference_without_metadata(registry, tmp_path, monkeypatch, include_live):
+    main = tmp_path / "main rules"
+    write_rule(main, "R04")
+    use_directory(monkeypatch, registry, main)
+    candidate = tmp_path / "sparse candidate with spaces"
+    write_rule(candidate / "rules", "R04b", approved_by=None, status="proposed")
+    reference = candidate / "rules/L1_PREDECL.py"
+    reference.write_text('RULE_ID = "L1_PREDECL"\nraise RuntimeError("reference must not import")\n',
+                         encoding="utf-8")
+    selected = ["R04", "R04b"] if include_live else ["R04b"]
+    pack = registry.load_pack(selected, mode="measure", candidate_dir=candidate)
+    assert [rule.rule_id for rule in pack.active] == selected
+    assert [hit.rule_id for hit in pack.check_atom(SimpleNamespace(text="synthetic"))] == selected
+    assert pack.active[-1].meta.approved_by is None
+    with pytest.raises(ValueError, match="L1_PREDECL"):
+        registry._discover(candidate / "rules", selected={"L1_PREDECL"})
+    use_directory(monkeypatch, registry, candidate / "rules")
+    with pytest.raises(ValueError, match="L1_PREDECL"):
+        registry.all_rules()
+
+
+def test_selected_candidate_missing_metadata_is_rejected(registry, tmp_path, monkeypatch):
+    main = tmp_path / "main rules"
+    write_rule(main, "R04")
+    use_directory(monkeypatch, registry, main)
+    candidate = tmp_path / "candidate with spaces"
+    path = write_rule(candidate / "rules", "R04b", approved_by=None, status="proposed")
+    path.with_suffix(".meta.json").unlink()
+    with pytest.raises(ValueError, match="exactly one selected candidate"):
+        registry.load_pack(["R04b"], mode="measure", candidate_dir=candidate)
+    with pytest.raises(ValueError, match="R04b"):
+        registry._discover(candidate / "rules", selected={"R04b"})
