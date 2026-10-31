@@ -47,11 +47,13 @@ def _discover(directory, selected=None, *, metadata=None):
         if not ids:
             continue
         rule_id, = ids
-        if rule_id not in metadata or rule_id in seen:
-            raise ValueError(f"Duplicate or mismatched rule id: {rule_id}")
+        if rule_id in seen:
+            raise ValueError(f"Duplicate rule id: {rule_id}")
         seen.add(rule_id)
         if selected is not None and rule_id not in selected:
             continue
+        if rule_id not in metadata:
+            raise ValueError(f"Missing or mismatched metadata for rule id: {rule_id}")
         meta = metadata[rule_id]
         location = hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()[:16]
         spec = importlib.util.spec_from_file_location(f"rules._loaded_{path.stem}_{location}", path)
