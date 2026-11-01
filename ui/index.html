@@ -1,10 +1,47 @@
 <!doctype html>
-<html lang="en" data-palette="oil"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Grounded Claim Ledger</title><link rel="stylesheet" href="/styles/fonts.css"><link rel="stylesheet" href="/styles/tokens.css">
-<link rel="stylesheet" href="/styles/app.css"></head>
-<body><header><a href="#/">Grounded Claim Ledger</a><span id="time-context">REPLAY</span>
-<nav><a href="#/review">Review</a><a href="#/present" id="present-link">Present</a><button id="palette">Palette</button><button id="stage">Stage</button></nav></header>
-<p id="public-banner" class="notice" hidden>Public demo: replay of a reenacted session. Typed sentences are checked by code rules only.</p>
-<main id="app" aria-live="polite"></main><aside id="stage-corner" hidden></aside>
-<span id="operator-dot" hidden></span><script type="module" src="/app.js"></script></body></html>
+<html lang="en" data-palette="obsidian">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Review livestream claims alongside the product dossier and the law in force at broadcast time.">
+  <title>Grounded Claim Ledger</title>
+  <link rel="stylesheet" href="/styles/fonts.css">
+  <link rel="stylesheet" href="/styles/tokens.css?v=signal-1">
+  <link rel="stylesheet" href="/styles/app.css?v=signal-frame-1">
+  <link rel="stylesheet" href="/styles/motion.css?v=signal-1">
+</head>
+<body>
+  <a class="skip-link" href="#app">Skip to workspace</a>
+  <header class="site-header">
+    <a class="brand" href="#/" aria-label="Grounded Claim Ledger home">
+      <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+      <span class="brand-text"><strong>Grounded Claim Ledger</strong><small>Claim conformance / Review desk</small></span>
+    </a>
+    <nav class="primary-nav" aria-label="Workspace">
+      <a href="#/" id="ledger-link">Ledger</a>
+      <a href="#/review" id="review-link">Review</a>
+      <a href="#/present" id="present-link">Monitor</a>
+    </nav>
+    <div class="header-controls">
+      <span id="time-context" class="mode-chip">REPLAY</span>
+      <label class="theme-picker">Theme
+        <select id="palette">
+          <option value="obsidian">Obsidian / Acid</option>
+          <option value="violet">Violet / Ice</option>
+          <option value="coldcase">Cold Case</option>
+          <option value="oil">Ivory / Navy</option>
+          <option value="cobalt">White / Cobalt</option>
+          <option value="forest">Paper / Forest</option>
+          <option value="graphite">Slate / Dark</option>
+        </select>
+      </label>
+      <button id="stage" type="button" aria-pressed="false" title="Enlarge the interface for presentation">Stage</button>
+    </div>
+  </header>
+  <p id="public-banner" class="public-banner" hidden>Public demo: replay of a reenacted session. Typed sentences are checked by code rules only.</p>
+  <main id="app" tabindex="-1"></main>
+  <aside id="stage-corner" hidden></aside>
+  <span id="operator-dot" hidden></span>
+  <script type="module" src="/app.js?v=signal-1"></script>
+</body>
+</html>

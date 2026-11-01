@@ -1,8 +1,8 @@
 import { el } from './dom.js';
 import { request, setPresenter, events } from './data.js';
-import { sessionScreen } from './session-screen.js';
-import { clipScene } from './clip.js';
-import { presenterView } from './presenter.js';
+import { sessionScreen } from './session-screen.js?v=turn-fills-1';
+import { clipScene } from './clip.js?v=signal-1';
+import { presenterView } from './presenter.js?v=signal-1';
 import { sentenceBox } from './preflight.js';
 import { reviewView } from './review.js';
 
@@ -13,6 +13,15 @@ const storage = {
   get(key) { try { return localStorage.getItem(key); } catch { return null; } },
   set(key, value) { try { localStorage.setItem(key, value); } catch { /* Storage is optional. */ } },
 };
+const palettes = ['obsidian', 'violet', 'coldcase', 'oil', 'cobalt', 'forest', 'graphite'];
+function validPalette(value) { return palettes.includes(value) ? value : 'obsidian'; }
+const requestedPalette = new URLSearchParams(location.search).get('theme');
+html.dataset.palette = validPalette(palettes.includes(requestedPalette) ? requestedPalette : storage.get('palette-v3'));
+if (palettes.includes(requestedPalette)) {
+  storage.set('palette-v3', requestedPalette);
+  const url = new URL(location.href); url.searchParams.delete('theme');
+  history.replaceState(history.state, '', url);
+}
 async function corner() {
   const node = document.querySelector('#stage-corner');
   node.hidden = html.dataset.stage !== 'true';
@@ -22,15 +31,34 @@ async function corner() {
     node.textContent = `${health.backend} · offline=${health.offline}${health.loop_dry ? ' · DRY RUN' : ''}`;
   } catch { node.textContent = 'Health unavailable'; }
 }
+function setPalette(value) {
+  html.dataset.palette = validPalette(value);
+  storage.set('palette-v3', html.dataset.palette);
+  syncControls();
+}
 function palette() {
-  html.dataset.palette = html.dataset.palette === 'oil' ? 'graphite' : 'oil';
-  storage.set('palette', html.dataset.palette);
+  const index = palettes.indexOf(validPalette(html.dataset.palette));
+  setPalette(palettes[(index + 1) % palettes.length]);
 }
 function stage() {
   html.dataset.stage = String(html.dataset.stage !== 'true'); storage.set('stage', html.dataset.stage); corner();
+  syncControls();
 }
-document.querySelector('#palette').onclick = palette;
+function syncControls() {
+  document.querySelector('#palette').value = html.dataset.palette;
+  document.querySelector('#stage').setAttribute('aria-pressed', String(html.dataset.stage === 'true'));
+}
+function pageHeading(title, description) {
+  const heading = el('section', '', 'page-heading');
+  heading.append(el('p', 'EVIDENCE WORKSPACE', 'eyebrow'), el('h1', title), el('p', description, 'page-description'));
+  return heading;
+}
+document.querySelector('#palette').onchange = event => setPalette(event.target.value);
 document.querySelector('#stage').onclick = stage;
+syncControls();
+document.querySelector('.skip-link').onclick = event => {
+  event.preventDefault(); app.focus(); app.scrollIntoView({ block: 'start' });
+};
 setInterval(corner, 10000);
 
 async function showSession(root, id, translations = {}, options = {}) {
@@ -55,6 +83,7 @@ async function scene(root, number, backup, manifest) {
       await showSession(root, number === 3 ? 'kera-reenact-2024-12-12' : 'kera-reenact-2025-01-08', manifest.translations, { focusRecall: number === 4, initialTurn: number === 2 ? 't07' : undefined });
     } else {
       const view = await reviewView({ approver: manifest.present.approver, target: manifest.present.pr1_third_target, focusPR2: number === 6 });
+      if (!root.isConnected) return;
       root.append(view.node);
       stopEvents = events(false, event => { if (['queue.changed', 'job.started', 'job.finished', 'job.attempt', 'rule.merged', 'backfill.done', 'dossier.pending'].includes(event.type)) view.refresh(); });
     }
@@ -64,39 +93,61 @@ async function scene(root, number, backup, manifest) {
 async function route() {
   const current = ++generation;
   stopEvents(); stopEvents = () => {}; presenter = null;
-  app.replaceChildren();
+  const loading = el('p', 'Loading workspace…', 'loading-state');
+  loading.setAttribute('role', 'status');
+  app.replaceChildren(loading);
+  app.setAttribute('aria-busy', 'true');
   try {
-    health = await request('/api/health');
+    const nextHealth = await request('/api/health');
+    if (current !== generation) return;
+    health = nextHealth;
     const publicMode = Boolean(health.public);
     const isPresenter = !publicMode && location.hash.startsWith('#/present');
     setPresenter(isPresenter);
     document.querySelector('#present-link').hidden = publicMode;
     document.querySelector('#public-banner').hidden = !publicMode;
-    html.dataset.palette = storage.get('palette') || health.palette || 'oil';
     html.dataset.stage = storage.get('stage') || String(Boolean(health.stage));
+    syncControls();
+    const activeLink = isPresenter ? 'present-link' : location.hash.startsWith('#/review') ? 'review-link' : 'ledger-link';
+    for (const link of document.querySelectorAll('.primary-nav a')) {
+      if (link.id === activeLink) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
+    }
+    if (activeLink !== 'ledger-link') document.querySelector('#time-context').textContent = isPresenter ? 'INSPECTION' : 'REVIEW';
     await corner();
     if (current !== generation) return;
     if (isPresenter) {
-      presenter = await presenterView((...args) => { stopEvents(); scene(...args); });
-      if (current === generation) app.append(presenter.node);
+      const view = await presenterView((...args) => { stopEvents(); scene(...args); });
+      if (current !== generation) return;
+      presenter = view; app.append(view.node);
+      const clip = new URLSearchParams(location.hash.split('?')[1]).get('clip');
+      if (['a1', 'a2'].includes(clip) && view.node.isConnected) view.openClip(clip);
     } else if (location.hash.startsWith('#/review')) {
+      app.append(pageHeading('Human review', 'Resolve uncertain claims, inspect rule proposals, and review the evidence behind each decision.'));
       let present = {};
       if (!publicMode) {
         try { present = (await request('/api/present/manifest')).present; } catch { /* Optional presenter defaults. */ }
       }
+      if (current !== generation) return;
       const view = await reviewView({ publicMode, approver: present.approver, target: present.pr1_third_target });
-      if (current === generation) app.append(view.node);
+      if (current !== generation) return;
+      app.append(view.node);
       stopEvents = events(publicMode, event => {
         if (['queue.changed', 'job.started', 'job.finished', 'job.attempt', 'rule.merged', 'backfill.done', 'dossier.pending'].includes(event.type)) view.refresh();
       });
     } else {
-      app.append(el('h1', 'Session ledger'));
+      app.append(pageHeading('Session ledger', 'Follow a claim from what was said to what the dossier permits.'));
       const id = new URLSearchParams(location.hash.split('?')[1]).get('session');
-      app.append(sentenceBox());
-      if (publicMode) {
+      const workspaceTools = el('section', '', 'workspace-tools');
+      const check = el('details', '', 'preflight-panel');
+      const checkTitle = el('summary', '', 'preflight-toggle');
+      checkTitle.append(el('span', 'Check a sentence'), el('small', 'Run a separate code check', 'muted'));
+      check.append(checkTitle, sentenceBox());
+      try {
         const sessions = await request('/api/sessions');
+        if (current !== generation) return;
         if (sessions.length) {
-          const label = el('label', 'Reenacted session');
+          const label = el('label', publicMode ? 'Reenacted session' : 'Session', 'session-picker');
           const select = el('select');
           for (const row of sessions) {
             const option = el('option', `${row.as_of} · ${row.session_id}`);
@@ -104,19 +155,35 @@ async function route() {
           }
           select.value = id || sessions[0].session_id;
           select.onchange = () => { location.hash = `#/?session=${encodeURIComponent(select.value)}`; };
-          label.append(select); app.append(label);
+          label.append(select); workspaceTools.append(label);
         }
-      }
+      } catch { /* The session screen can still show its explicit unavailable state. */ }
+      if (current !== generation) return;
+      workspaceTools.append(check); app.append(workspaceTools);
       let translations = {};
       if (!publicMode) {
         try { translations = (await request('/api/present/manifest')).translations; } catch { /* Optional local translations. */ }
       }
-      await showSession(app, id, translations);
+      if (current !== generation) return;
+      await showSession(app, id, translations, {
+        onNavigate: target => { location.hash = `#/?session=${encodeURIComponent(target)}`; },
+      });
     }
-  } catch { app.append(el('p', 'Session unavailable. Please check the local service.', 'notice')); }
+  } catch {
+    if (current !== generation) return;
+    const unavailable = el('section', '', 'empty-state service-error');
+    unavailable.setAttribute('role', 'alert');
+    const retry = el('button', 'Try again'); retry.type = 'button'; retry.onclick = route;
+    unavailable.append(el('h2', 'Workspace unavailable'), el('p', 'Check that the local service is running, then try again.', 'muted'), retry);
+    app.append(unavailable);
+  } finally {
+    loading.remove();
+    if (current === generation) app.setAttribute('aria-busy', 'false');
+  }
 }
 window.addEventListener('hashchange', route);
 window.addEventListener('keydown', event => {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;
   if (event.target.closest('input, textarea, select, [contenteditable="true"]')) return;
   const key = event.key.toLowerCase();
   if (key === 'p') palette();
