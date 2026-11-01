@@ -1,0 +1,63 @@
+/*
+ * Adapted from Animate UI's Fade, text-swap and press recipes.
+ * Copyright (c) 2025 Elliot Sutton. Source pin and full license notices:
+ * docs/third-party-ui.md.
+ * Native CSS uses the upstream tween fallback instead of a spring runtime.
+ */
+:root {
+  --aui-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --aui-ease-color: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --aui-swap-duration: 150ms;
+  --aui-fade-duration: 200ms;
+  --aui-color-duration: 200ms;
+  --aui-text-blur: 2px;
+  --aui-press-scale: 0.97;
+  --aui-row-press-scale: 0.985;
+}
+
+/* Apply only to a newly rendered transcript cue, never to playback ticks. */
+.claim-reveal {
+  animation: aui-claim-in var(--aui-swap-duration) var(--aui-ease-out) 0ms 1 both;
+}
+
+/* Apply after the server assessment arrives; this never stages a result. */
+.evidence-reveal {
+  animation: aui-evidence-in var(--aui-fade-duration) var(--aui-ease-out) 0ms 1 both;
+}
+
+@keyframes aui-claim-in {
+  from { opacity: 0; filter: blur(var(--aui-text-blur)); }
+  to { opacity: 1; filter: none; }
+}
+
+@keyframes aui-evidence-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+button {
+  transition:
+    background-color var(--aui-color-duration) var(--aui-ease-color),
+    border-color var(--aui-color-duration) var(--aui-ease-color),
+    color var(--aui-color-duration) var(--aui-ease-color),
+    transform var(--aui-swap-duration) var(--aui-ease-out);
+}
+
+button:active:not(:disabled) { transform: scale(var(--aui-press-scale)); }
+.turn:active:not(:disabled),
+.search-results > button:active:not(:disabled),
+.clip-history > button:active:not(:disabled) { transform: scale(var(--aui-row-press-scale)); }
+
+/* A focus ring must be visible immediately, including during an entrance. */
+.claim-reveal:focus-within,
+.evidence-reveal:focus-within { animation: none; }
+
+/* Keep the application's existing preference for completely still UI. */
+@media (prefers-reduced-motion: reduce) {
+  .claim-reveal, .evidence-reveal { animation: none; opacity: 1; filter: none; }
+  button { transition: none; }
+  button:active:not(:disabled),
+  .turn:active:not(:disabled),
+  .search-results > button:active:not(:disabled),
+  .clip-history > button:active:not(:disabled) { transform: none; }
+}

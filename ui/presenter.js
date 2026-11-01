@@ -2,7 +2,7 @@ import { el } from './dom.js';
 import { request, post } from './data.js';
 
 export async function presenterView(showScene) {
-  const root = el('section');
+  const root = el('section', '', 'presenter-workspace');
   let manifest;
   try { manifest = await request('/api/present/manifest'); }
   catch { manifest = { slides: [], clips: {}, translations: {}, present: {} }; }
@@ -19,11 +19,22 @@ export async function presenterView(showScene) {
   }
   function jump(next, backup = false) {
     previous = scene; scene = next;
-    root.replaceChildren(el('h1', ['Slides', 'Opening clip', 'Kera · 2025-01-08', '2024-12-12', 'Recall notice (replay)', 'Review', 'Merge PR2'][scene]));
+    if (scene === 1) {
+      const heading = el('header', '', 'inspection-heading');
+      const title = el('div');
+      title.append(el('p', 'CLAIM CONFORMANCE / INSPECTION', 'eyebrow'), el('h1', 'Inspection desk'));
+      const context = el('p', '', 'inspection-context');
+      context.append(el('span', `SOURCE ${backup ? 'A2' : 'A1'}`, 'mono'), el('span', 'Recorded evidence'));
+      heading.append(title, context); root.replaceChildren(heading);
+    } else {
+      root.replaceChildren(el('h1', ['Slides', '', 'Kera · 2025-01-08', '2024-12-12', 'Recall notice (replay)', 'Review', 'Merge PR2'][scene]));
+    }
     showScene(root, scene, backup, manifest);
   }
   slide();
-  return { node: root, manifest, async key(event) {
+  return { node: root, manifest, openClip(key) {
+    if (['a1', 'a2'].includes(key)) jump(1, key === 'a2');
+  }, async key(event) {
     const key = event.key.toLowerCase();
     if (key === 'arrowright') {
       event.preventDefault();

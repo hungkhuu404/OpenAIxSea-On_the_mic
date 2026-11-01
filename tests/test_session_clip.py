@@ -165,6 +165,32 @@ def test_real_offline_clip_startup(assets):
         assert all(row.reason_code == "LLM_OFF" for row in session.verdicts)
 
 
+def test_process_clip_turn_uses_worker_and_leaves_full_session_route_unchanged(assets, runner, monkeypatch):
+    calls = []
+
+    def process_turn(sid, turn_id, purpose, reprocess=False):
+        asyncio.run(asyncio.sleep(0))
+        calls.append((sid, turn_id, purpose, reprocess))
+        return {"turn_verdicts": {turn_id: "abstain"}}
+
+    monkeypatch.setattr(sys.modules["pipeline.runner"], "process_turn", process_turn, raising=False)
+    with TestClient(create_app()) as client:
+        result = client.post("/api/sessions/clip-a1/process", json={"turn_id": "t01", "reprocess": True})
+        assert result.status_code == 200
+        assert result.json() == {"turn_verdicts": {"t01": "abstain"}}
+        assert calls == [("clip-a1", "t01", "live", True)]
+        assert client.post("/api/sessions/clip-a1/process", json={"turn_id": "missing"}).status_code == 404
+        assert client.post("/api/sessions/clip-a1/process", json={"turn_id": ""}).status_code == 422
+        assert len(calls) == 1
+        assert client.post("/api/sessions/clip-a1/process", json={"reprocess": True}).status_code == 200
+        assert runner[-1][-1] is True
+
+
+def test_public_cannot_process_clip_turn(assets):
+    with TestClient(create_app(public=True)) as client:
+        assert client.post("/api/sessions/clip-a1/process", json={"turn_id": "t01", "reprocess": True}).status_code == 403
+
+
 def test_text_ingest_runs_once_and_falls_back_without_dossier_events(runner, monkeypatch):
     original = sessions.import_module
 

@@ -74,6 +74,7 @@ class IngestRequest(BaseModel):
 
 class ProcessRequest(BaseModel):
     reprocess: bool = False
+    turn_id: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class RecallRequest(BaseModel):
@@ -107,8 +108,14 @@ async def create_session(body: IngestRequest):
 @router.post("/sessions/{id}/process")
 async def process(id: str, body: ProcessRequest = ProcessRequest()):
     def run():
-        if ledger.get_session(id) is None:
+        session = ledger.get_session(id)
+        if session is None:
             raise HTTPException(404, "Session not found")
+        if body.turn_id is not None:
+            if not any(turn.turn_id == body.turn_id for turn in session.turns):
+                raise HTTPException(404, "Turn not found")
+            return dependency("pipeline.runner").process_turn(
+                id, body.turn_id, "live", reprocess=body.reprocess)
         return dependency("pipeline.runner").process_session(id, "live", reprocess=body.reprocess)
     return await asyncio.to_thread(run)
 

@@ -14,7 +14,7 @@ import pytest
 import ledger
 from core import paths
 from core.config import settings
-from core.enums import AtomFlag
+from core.enums import AtomFlag, Channel
 from core.models import Atom, RuleHit, Session, Turn
 from pipeline import llm, runner
 from pipeline.drafts import VerdictDraft
@@ -125,7 +125,8 @@ def test_process_reprocess_real_sqlite_preserves_history_and_search(integrated):
 @pytest.mark.parametrize("matched,expected", [
     ("FABRICATED QUOTE", None), ("alpha", "alpha"), ("", ""),
 ], ids=["outside-atom", "inside-atom", "empty"])
-def test_red_rule_evidence_span_is_source_bound_in_sqlite(integrated, monkeypatch, matched, expected):
+@pytest.mark.parametrize("scope", ["session", "turn"])
+def test_red_rule_evidence_span_is_source_bound_in_sqlite(integrated, monkeypatch, matched, expected, scope):
     r04, = load_pack(["R04"], mode="live").active
     hit = RuleHit(rule_id="R04", family="R04", matched=matched,
                   law_anchor=r04.meta.anchors[0], law_span=r04.meta.law_span,
@@ -136,7 +137,8 @@ def test_red_rule_evidence_span_is_source_bound_in_sqlite(integrated, monkeypatc
     monkeypatch.setattr(runner, "_live_pack", lambda: (pack, version))
 
     original = ledger.add_session(session())
-    result = runner.process_session(original.session_id, "live")
+    result = (runner.process_turn(original.session_id, "t01", "live") if scope == "turn" else
+              runner.process_session(original.session_id, "live"))
     stored = ledger.get_session(original.session_id)
     verdict, = stored.verdicts
     atom, = stored.atoms
@@ -193,6 +195,163 @@ def test_rule_off_replaces_real_session_flags(integrated, operation):
 def test_process_reports_missing_session(integrated):
     with pytest.raises(ValueError, match="Session not found"):
         runner.process_session("missing", "live")
+
+
+def two_turn_session():
+    value = session()
+    value.turns.append(Turn(turn_id="t02", speaker_label="[unidentified]",
+                           attribution="not_applicable", text="delta epsilon"))
+    return value.model_copy(update={"channel": Channel.VIDEO})
+
+
+def test_process_turn_preserves_other_turn_and_real_previous_context(integrated, monkeypatch):
+    value = two_turn_session()
+    ledger.add_session(value)
+    runner.process_session(value.session_id, "live")
+    original = ledger.get_session(value.session_id)
+    first_atom = original.atoms[0]
+    first_verdict = original.verdicts[0]
+    previous_second = original.verdicts[1]
+    seen = []
+    extract = sys.modules["pipeline.extract"].extract_atoms
+
+    def record(source, turn, previous, *args, **kwargs):
+        seen.append((source.session_id, source.channel, turn, previous))
+        return extract(source, turn, previous, *args, **kwargs)
+
+    monkeypatch.setitem(sys.modules, "pipeline.extract", SimpleNamespace(extract_atoms=record))
+    integrated.spans = ["epsilon"]
+    before_events = len(ledger.events_since(0))
+    result = runner.process_turn(value.session_id, "t02", "live", reprocess=True)
+    stored = ledger.get_session(value.session_id)
+    assert seen == [(value.session_id, "video", value.turns[1], value.turns[0])]
+    assert result.turn_verdicts == {"t02": "green"}
+    assert stored.atoms == [first_atom, result.atoms[0]]
+    assert stored.verdicts == [first_verdict, result.verdicts[0]]
+    assert result.verdicts[0].supersedes == previous_second.verdict_id
+    assert ledger.get_verdict(previous_second.verdict_id) == previous_second
+    assert not [row for row in ledger.search("delta") if row["kind"] == "atom"]
+    assert [row for row in ledger.search("alpha") if row["kind"] == "atom"]
+    assert {event.payload.get("turn_id") for event in ledger.events_since(0)[before_events:]
+            if event.payload.get("turn_id")} == {"t02"}
+    integrated.spans = []
+    runner.process_turn(value.session_id, "t02", "live", reprocess=True)
+    assert ledger.get_session(value.session_id).atoms == [first_atom]
+    assert ledger.get_session(value.session_id).verdicts == [first_verdict]
+
+
+def test_process_turn_concurrent_identical_requests_share_model_calls(integrated, monkeypatch):
+    ledger.add_session(session())
+    entered, waiting, release = threading.Event(), threading.Event(), threading.Event()
+    extract = sys.modules["pipeline.extract"].extract_atoms
+    original_future = runner.Future
+
+    class ObservedFuture(original_future):
+        def result(self, *args, **kwargs):
+            waiting.set()
+            return super().result(*args, **kwargs)
+
+    def slow(*args, **kwargs):
+        entered.set()
+        assert release.wait(timeout=10)
+        return extract(*args, **kwargs)
+
+    monkeypatch.setattr(runner, "Future", ObservedFuture)
+    monkeypatch.setitem(sys.modules, "pipeline.extract", SimpleNamespace(extract_atoms=slow))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(runner.process_turn, "sqlite-fixture", "t01", "live", True)
+        assert entered.wait(timeout=10)
+        second = pool.submit(runner.process_turn, "sqlite-fixture", "t01", "live", True)
+        try:
+            assert waiting.wait(timeout=10)
+        finally:
+            release.set()
+        assert first.result(timeout=20) is second.result(timeout=20)
+    assert integrated.extracts == 1
+    assert sorted(integrated.calls) == ["s1", "t1", "t2"]
+    assert count("verdicts") == 1
+
+
+def test_process_turn_concurrent_different_turns_merge_fresh_state(integrated):
+    value = two_turn_session()
+    ledger.add_session(value)
+    integrated.barrier = threading.Barrier(2)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(runner.process_turn, value.session_id, turn.turn_id, "live", True)
+                   for turn in value.turns]
+        results = [future.result(timeout=20) for future in futures]
+    stored = ledger.get_session(value.session_id)
+    assert [atom.turn_id for atom in stored.atoms] == ["t01", "t02"]
+    assert {row.verdict_id for row in stored.verdicts} == {
+        result.verdicts[0].verdict_id for result in results}
+    assert count("atoms") == count("verdicts") == 2
+
+
+@pytest.mark.parametrize("second", [(True, True), (False, False)])
+def test_process_turn_does_not_coalesce_different_request_modes(integrated, monkeypatch, second):
+    barrier = threading.Barrier(2)
+
+    def compute(session_id, turn_id, purpose, reprocess, cache_read):
+        barrier.wait(timeout=10)
+        return reprocess, cache_read
+
+    monkeypatch.setattr(runner, "_process_turn", compute)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(runner.process_turn, "sqlite-fixture", "t01", "live")
+        other = pool.submit(runner.process_turn, "sqlite-fixture", "t01", "live",
+                            reprocess=second[0], cache_read=second[1])
+        assert first.result(timeout=20) == (False, True)
+        assert other.result(timeout=20) == second
+
+
+@pytest.mark.parametrize("change", ["pack", "recall"])
+def test_process_turn_rejects_changed_pack_or_recall(integrated, monkeypatch, change):
+    ledger.add_session(session())
+    extract = sys.modules["pipeline.extract"].extract_atoms
+    expected = {}
+
+    def mutate(*args, **kwargs):
+        atoms = extract(*args, **kwargs)
+        if change == "pack":
+            ledger.create_pack_version([], [], "merge", approved_by="hungkhuu404")
+        else:
+            from pipeline.dossier_events import apply_recall
+            apply_recall("kera", "2025-03-24", "Synthetic recall")
+        expected.update(replay_state())
+        return atoms
+
+    monkeypatch.setitem(sys.modules, "pipeline.extract", SimpleNamespace(extract_atoms=mutate))
+    with pytest.raises(ValueError, match="changed during computation"):
+        runner.process_turn("sqlite-fixture", "t01", "live", reprocess=True)
+    assert replay_state() == expected
+
+
+def test_process_turn_rolls_back_and_releases_failed_request(integrated, monkeypatch):
+    ledger.add_session(two_turn_session())
+    runner.process_session("sqlite-fixture", "live")
+    before = replay_state()
+    append = ledger.append_verdicts
+
+    def fail(rows):
+        append(rows)
+        raise RuntimeError("Synthetic append failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(ledger, "append_verdicts", fail)
+        with pytest.raises(RuntimeError, match="Synthetic append failure"):
+            runner.process_turn("sqlite-fixture", "t02", "live", reprocess=True)
+    assert replay_state() == before
+    assert runner.process_turn("sqlite-fixture", "t02", "live", reprocess=True).verdicts
+
+
+def test_process_turn_offline_never_calls_backend(integrated, monkeypatch):
+    ledger.add_session(session())
+    monkeypatch.setattr(settings, "OFFLINE", 1)
+    result = runner.process_turn("sqlite-fixture", "t01", "live", reprocess=True)
+    assert result.verdicts[0].reason_code == "LLM_OFF"
+    assert integrated.calls == []
+    with pytest.raises(ValueError, match="Turn not found"):
+        runner.process_turn("sqlite-fixture", "missing", "live")
 
 
 @pytest.mark.parametrize("reprocess", [False, True])

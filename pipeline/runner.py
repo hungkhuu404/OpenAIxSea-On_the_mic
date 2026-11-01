@@ -5,14 +5,18 @@ a background thread; never call them directly in a running event loop.
 """
 
 from dataclasses import dataclass, field
+from concurrent.futures import Future
 from importlib import import_module
 import logging
+from threading import Lock
 from time import monotonic
 
 from core.models import Atom, ReplayResult, Session, SessionFlag, Verdict
 
 
 logger = logging.getLogger(__name__)
+_turn_requests = {}
+_turn_requests_lock = Lock()
 
 
 @dataclass
@@ -62,7 +66,7 @@ def _fallback(turn):
                  speaker_role="khong_ro", subject_is_product=True)]
 
 
-def _compute(session, pack, version, purpose, emit=None, cache_read=True):
+def _compute(session, pack, version, purpose, emit=None, cache_read=True, *, turn_id=None):
     from core.config import settings
     from pipeline.context import build_context
     from pipeline.router import _optional_module, _route_atom
@@ -84,6 +88,9 @@ def _compute(session, pack, version, purpose, emit=None, cache_read=True):
     extract = _optional_module("pipeline.extract")
     previous = None
     for turn in session.turns:
+        if turn_id is not None and turn.turn_id != turn_id:
+            previous = turn
+            continue
         started = monotonic()
         if extract is None:
             if not (settings.OFFLINE or settings.PUBLIC_MODE or settings.LLM_BACKEND == "off"):
@@ -182,6 +189,111 @@ def process_session(session_id, purpose, reprocess=False, *, cache_read=True) ->
             ledger.append_event("session.flag", dict(session_id=session_id, flag_code=str(flag.flag_code),
                                                      rule_id=flag.rule_id, legal_basis=flag.legal_basis))
     return computed
+
+
+def _turn_snapshot(stored, turn_id):
+    """Scope a result without changing the original session or previous turn."""
+    atoms = [atom for atom in stored.atoms if atom.turn_id == turn_id]
+    keys = {f"{stored.session.session_id}:{atom.atom_id}" for atom in atoms}
+    result = SessionResult(stored.session, atoms,
+                           [row for row in stored.verdicts if row.atom_key in keys],
+                           list(stored.flags))
+    aggregate = import_module("pipeline.aggregate")
+    result.turn_verdicts[turn_id] = aggregate.turn_verdict(result.verdicts)
+    colours = list(result.turn_verdicts.values())
+    result.case_verdict = aggregate.case_verdict(colours, result.flags)
+    result.case_decided_by = aggregate.case_decided_by(colours, result.verdicts, result.flags)
+    return result
+
+
+def _process_turn(session_id, turn_id, purpose, reprocess, cache_read):
+    import ledger
+    from pipeline.dossier_events import _mark_recalled, _recall_state
+    from pipeline.llm import run_scope
+
+    stored = _snapshot(ledger.get_session(session_id))
+    if not any(turn.turn_id == turn_id for turn in stored.session.turns):
+        raise ValueError("Turn not found")
+    existing = _turn_snapshot(stored, turn_id)
+    if existing.verdicts and not reprocess:
+        return existing
+    pack, version = _live_pack()
+    recalls = _recall_state()
+    events = []
+    with run_scope(local_writes=not cache_read):
+        computed = _compute(stored.session, pack, version, purpose,
+                            lambda kind, payload: events.append((kind, payload)),
+                            cache_read, turn_id=turn_id)
+    _mark_recalled(computed.session, computed.verdicts, recalls)
+    with ledger.transaction():
+        current = _snapshot(ledger.get_session(session_id))
+        if ledger.current_pack().version != version:
+            raise ValueError("Rule pack changed during computation; process the turn again")
+        if _recall_state() != recalls:
+            raise ValueError("Recall state changed during computation; process the turn again")
+        if any(getattr(current.session, field) != getattr(stored.session, field)
+               for field in ("sku_pin", "as_of", "channel", "source", "turns")):
+            raise ValueError("Session changed during computation; process the turn again")
+        existing = _turn_snapshot(current, turn_id)
+        if existing.verdicts and not reprocess:
+            return existing
+        # Re-read inside the write transaction: another turn may have completed
+        # while this one was evaluating. Preserve all of its atoms and history.
+        atoms = [atom for atom in current.atoms if atom.turn_id != turn_id] + computed.atoms
+        order = {turn.turn_id: index for index, turn in enumerate(current.session.turns)}
+        atoms.sort(key=lambda atom: (order[atom.turn_id], atom.start, atom.end, atom.atom_id))
+        ledger.replace_atoms(session_id, atoms)
+        prior = {row.atom_key: row for row in ledger.latest_verdicts(session_id)}
+        for verdict in computed.verdicts:
+            previous = prior.get(verdict.atom_key)
+            verdict.supersedes = previous.verdict_id if previous is not None else None
+        ids = ledger.append_verdicts(computed.verdicts)
+        for verdict, verdict_id in zip(computed.verdicts, ids, strict=True):
+            verdict.verdict_id = verdict_id
+        ledger.replace_session_flags(session_id, computed.flags)
+        # Durable trace describes completed work; it is never emitted as live
+        # progress before the atom/verdict transaction succeeds.
+        for kind, payload in events:
+            ledger.append_event(kind, payload)
+        for atom, verdict in zip(computed.atoms, computed.verdicts, strict=True):
+            ledger.append_event("verdict", dict(
+                verdict_id=verdict.verdict_id, session_id=session_id, turn_id=atom.turn_id,
+                atom_id=atom.atom_id, verdict=str(verdict.verdict), decided_by=verdict.decided_by,
+                reason_code=str(verdict.reason_code) if verdict.reason_code else None))
+        for key, verdict in computed.turn_verdicts.items():
+            ledger.append_event("turn.verdict", dict(session_id=session_id, turn_id=key,
+                                                     verdict=str(verdict)))
+        for flag in computed.flags:
+            ledger.append_event("session.flag", dict(session_id=session_id, flag_code=str(flag.flag_code),
+                                                     rule_id=flag.rule_id, legal_basis=flag.legal_basis))
+    return computed
+
+
+def process_turn(session_id, turn_id, purpose, reprocess=False, *, cache_read=True) -> SessionResult:
+    """Evaluate one source turn; concurrent requests share the same computation."""
+    from core import paths
+
+    if purpose not in ("live", "shadow"):
+        raise ValueError("Stored sessions require purpose live or shadow")
+    key = (str(paths.ledger_db()), session_id, turn_id, purpose, reprocess, cache_read)
+    with _turn_requests_lock:
+        pending = _turn_requests.get(key)
+        owner = pending is None
+        if owner:
+            pending = _turn_requests[key] = Future()
+    if not owner:
+        return pending.result()
+    try:
+        result = _process_turn(session_id, turn_id, purpose, reprocess, cache_read)
+        pending.set_result(result)
+        return result
+    except BaseException as error:
+        pending.set_exception(error)
+        raise
+    finally:
+        with _turn_requests_lock:
+            if _turn_requests.get(key) is pending:
+                del _turn_requests[key]
 
 
 def _case_session(case):
